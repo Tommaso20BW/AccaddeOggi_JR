@@ -25,17 +25,19 @@ def ottieni_accade_oggi():
         1: "GENNAIO", 2: "FEBBRAIO", 3: "MARZO", 4: "APRILE", 5: "MAGGIO", 6: "GIUGNO",
         7: "LUGLIO", 8: "AGOSTO", 9: "SETTEMBRE", 10: "OTTOBRE", 11: "NOVEMBRE", 12: "DICEMBRE"
     }
-    # Estrae la data e forza il mese in tutto maiuscolo
     data_italiana = f"{oggi.day} {mesi_ita[oggi.month]}".upper()
 
     client = Client()
 
+    # Istruzioni aggiornate: DIVIETO ASSOLUTO sui compleanni
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
     Regole tassative di selezione, stile e formattazione HTML per Telegram:
-    - Seleziona al massimo 2 o 3 eventi storici DAVVERO principali, iconici e importanti del giorno (es. vittorie di trofei, compleanni di leggende assulte, partite storiche).
-    - Se in questo giorno NON ci sono eventi storici di rilievo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
+    - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
+    - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
+    - Di tutti gli eventi validi trovati (esclusi i compleanni), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
+    - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
     - Se invece ci sono eventi importanti, NON inserire il titolo principale del post e inizia direttamente con il primo evento seguendo questa struttura:
       
       ANNO - <b>Titolo dell'Evento in Grassetto</b>
@@ -43,10 +45,10 @@ def ottieni_accade_oggi():
       
     - L'intera descrizione deve essere racchiusa tra i tag <i> e </i> per essere in corsivo.
     - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
-    - Sii storicamente preciso.
+    - Sii storicamente preciso e ordinali dal più vecchio al più recente.
     """
 
-    prompt = f"Trova e descrivi in modo sintetico gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus. Se non c'è nulla di rilevante scrivi solo VUOTO."
+    prompt = f"Trova le partite storiche, i trofei o i record di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI) e inserisci i 3 più importanti nel formato richiesto. Se non c'è nulla scrivi VUOTO."
 
     response = client.models.generate_content(
         model='gemini-3.5-flash',
@@ -64,7 +66,6 @@ def ottieni_accade_oggi():
     
     testo_formattato = converti_anno_in_emoji(testo_gemini)
 
-    # Titolo aggiornato con la barra dritta e mese in maiuscolo
     titolo_principale = f"<b>👀🔙 ACCADDE OGGI | {data_italiana}</b>\n\n"
     firma_finale = "\n\n👉 @Juventus_Reborn"
     
