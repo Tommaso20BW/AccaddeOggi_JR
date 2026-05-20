@@ -29,7 +29,7 @@ def ottieni_accade_oggi():
 
     client = Client()
 
-    # Istruzioni aggiornate: imposto il vincolo tassativo di titoli brevissimi (max 3-4 parole)
+    # Istruzioni aggiornate: SOLO CORSIVO nella descrizione, nessun grassetto all'interno
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
@@ -40,16 +40,16 @@ def ottieni_accade_oggi():
     - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
     - Se invece ci sono eventi importanti, NON inserire il titolo principale del post e inizia direttamente con il primo evento seguendo questa struttura:
       
-      ANNO - <b>Titolo Brevissimo</b>
-      <i>Descrizione molto breve di massimo due righe. Metti in grassetto (<b>nome</b>) solo i protagonisti.</i>
+      ANNO - <b>Titolo dell'Evento in Grassetto</b>
+      <i>Descrizione molto breve di massimo due righe.</i>
       
-    - RECOLA PER IL TITOLO: Il titolo in grassetto deve essere super sintetico, un flash di massimo 3 o 4 parole (Es: "Trionfo in Coppa Italia", "Rimonta pazzesca", "Scudetto numero 22").
-    - L'intera descrizione deve essere racchiusa tra i tag <i> e </i> per essere in corsivo.
+    - REGOLA PER IL TITOLO: Il titolo in grassetto deve essere super sintetico, un flash di massimo 3 o 4 parole (Es: "Trionfo in Coppa Italia", "Rimonta pazzesca", "Scudetto numero 22").
+    - REGOLA PER LA DESCRIZIONE: L'intera descrizione sotto al titolo deve essere racchiusa UNICAMENTE tra i tag <i> e </i>. Non inserire MAI tag di grassetto (<b>) all'interno della descrizione, nemmeno per i nomi di giocatori o allenatori. Deve essere tutto esclusivamente in corsivo pulito.
     - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
     - Sii storicamente preciso e ordinali dal più vecchio al più recente.
     """
 
-    prompt = f"Trova le partite storiche, i trofei o i record di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI) e inserisci i 3 più importanti nel formato richiesto con titoli flash di massimo 4 parole. Se non c'è nulla scrivi VUOTO."
+    prompt = f"Trova le partite storiche, i trofei o i record di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI) e inserisci i 3 più importanti nel formato richiesto. La descrizione deve essere solo in corsivo senza grassetti."
 
     response = client.models.generate_content(
         model='gemini-3.5-flash',
