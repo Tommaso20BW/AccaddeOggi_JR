@@ -1,6 +1,5 @@
 name: Avvia Rubrica Accade Oggi
 
-# Abilita l'avvio manuale dalla scheda "Actions"
 on:
   workflow_dispatch:
 
@@ -24,6 +23,7 @@ jobs:
 
     - name: Esegui lo script Python
       env:
-        # Passa il segreto salvato su GitHub come variabile d'ambiente allo script
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python script.py
