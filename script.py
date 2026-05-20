@@ -20,51 +20,52 @@ def converti_anno_in_emoji(testo):
     return re.sub(r'\b\d{4}\b', rimpiazza, testo)
 
 def ottieni_accade_oggi():
-    # 1. Recupera la data di oggi e imposta i mesi in italiano
     oggi = datetime.now()
     mesi_ita = {
         1: "GENNAIO", 2: "FEBBRAIO", 3: "MARZO", 4: "APRILE", 5: "MAGGIO", 6: "GIUGNO",
         7: "LUGLIO", 8: "AGOSTO", 9: "SETTEMBRE", 10: "OTTOBRE", 11: "NOVEMBRE", 12: "DICEMBRE"
     }
-    data_italiana = f"{oggi.day} {mesi_ita[oggi.month]}"
+    # Estrae la data e forza il mese in tutto maiuscolo
+    data_italiana = f"{oggi.day} {mesi_ita[oggi.month]}".upper()
 
     client = Client()
 
-    # Istruzioni tassative con tag HTML per garantire massima stabilità ed evitare testi appiccicati
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
-    Regole tassative di stile e formattazione HTML per Telegram:
-    - NON inserire il titolo principale del post. Inizia direttamente con il primo evento.
-    - Seleziona al massimo 2 o 3 eventi storici principali del giorno.
-    - Ogni evento deve seguire rigorosamente questa struttura a due righe separate, usando i tag HTML <b> e <i>:
+    Regole tassative di selezione, stile e formattazione HTML per Telegram:
+    - Seleziona al massimo 2 o 3 eventi storici DAVVERO principali, iconici e importanti del giorno (es. vittorie di trofei, compleanni di leggende assulte, partite storiche).
+    - Se in questo giorno NON ci sono eventi storici di rilievo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
+    - Se invece ci sono eventi importanti, NON inserire il titolo principale del post e inizia direttamente con il primo evento seguendo questa struttura:
       
       ANNO - <b>Titolo dell'Evento in Grassetto</b>
-      <i>Descrizione molto breve di massimo due ragioni o righe. Metti in grassetto (usando <b>nome</b>) solo i nomi dei protagonisti.</i>
+      <i>Descrizione molto breve di massimo due righe. Metti in grassetto (<b>nome</b>) solo i protagonisti.</i>
       
-    - Nota bene: l'intera descrizione deve iniziare con <i> e finire con </i> per essere in corsivo.
-    - Lascia sempre una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
-    - Sii storicamente preciso: non inventare mai dati o risultati.
+    - L'intera descrizione deve essere racchiusa tra i tag <i> e </i> per essere in corsivo.
+    - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
+    - Sii storicamente preciso.
     """
 
-    prompt = f"Trova e descrivi in modo sintetico gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus."
+    prompt = f"Trova e descrivi in modo sintetico gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus. Se non c'è nulla di rilevante scrivi solo VUOTO."
 
     response = client.models.generate_content(
         model='gemini-3.5-flash',
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=0.2,
+            temperature=0.1,
         )
     )
 
     testo_gemini = response.text.strip()
     
-    # Applica la conversione degli anni (es. 1973 -> 1️⃣9️⃣7️⃣3️⃣)
+    if testo_gemini.upper() == "VUOTO" or not testo_gemini:
+        return None
+    
     testo_formattato = converti_anno_in_emoji(testo_gemini)
 
-    # Costruisce il messaggio finale usando la formattazione HTML
-    titolo_principale = f"<b>👀🔙 ACCADDE OGGI - {data_italiana}</b>\n\n"
+    # Titolo aggiornato con la barra dritta e mese in maiuscolo
+    titolo_principale = f"<b>👀🔙 ACCADDE OGGI | {data_italiana}</b>\n\n"
     firma_finale = "\n\n👉 @Juventus_Reborn"
     
     return f"{titolo_principale}{testo_formattato}{firma_finale}"
@@ -96,9 +97,12 @@ if __name__ == "__main__":
         print("Generazione testo personalizzato (HTML)...")
         rubrica = ottieni_accade_oggi()
         
-        print("Invio a Telegram...")
-        invia_a_telegram(rubrica)
-        print("Inviato con successo senza errori!")
+        if rubrica is None:
+            print("Nessun evento importante trovato per oggi. L'invio a Telegram è stato annullato.")
+        else:
+            print("Invio a Telegram...")
+            invia_a_telegram(rubrica)
+            print("Inviato con successo!")
         
     except Exception as e:
         print(f"Errore: {e}")
