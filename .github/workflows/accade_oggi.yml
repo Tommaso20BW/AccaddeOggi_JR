@@ -1,0 +1,29 @@
+name: Avvia Rubrica Accade Oggi
+
+# Abilita l'avvio manuale dalla scheda "Actions"
+on:
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Scarica il codice della repository
+      uses: actions/checkout@v4
+
+    - name: Configura Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Installa le dipendenze
+      run: |
+        python -m pip install --upgrade pip
+        pip install google-genai
+
+    - name: Esegui lo script Python
+      env:
+        # Passa il segreto salvato su GitHub come variabile d'ambiente allo script
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: python script.py
