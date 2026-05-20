@@ -30,24 +30,24 @@ def ottieni_accade_oggi():
 
     client = Client()
 
-    # Istruzioni tassative per evitare testi appiccicati e forzare il corsivo su Telegram
+    # Istruzioni con tag HTML (<b> per grassetto, <i> per corsivo) per garantire massima stabilità
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
-    Regole tassative di stile e formattazione per Telegram:
-    - NON inserire il titolo principale del post (es. ACCADDE OGGI). Inizia direttamente con il primo evento.
+    Regole tassative di stile e formattazione HTML per Telegram:
+    - NON inserire il titolo principale del post. Inizia direttamente con il primo evento.
     - Seleziona al massimo 2 o 3 eventi storici principali del giorno.
-    - Ogni evento deve seguire rigorosamente questa struttura a due righe separate (usa un a capo netto tra titolo e descrizione):
+    - Ogni evento deve seguire rigorosamente questa struttura a due righe separate, usando i tag HTML <b> e <i>:
       
-      ANNO - *Titolo dell'Evento in Grassetto*
-      _Descrizione molto breve e stringata di massimo due righe. Metti in grassetto (*) solo i nomi dei protagonisti._
+      ANNO - <b>Titolo dell'Evento in Grassetto</b>
+      <i>Descrizione molto breve di massimo due righe. Metti in grassetto (usando <b>nome</b>) solo i nomi dei protagonisti.</i>
       
-    - Nota bene: la descrizione DEVE essere racchiusa tra trattini bassi (_) per apparire interamente in corsivo.
+    - Nota bene: l'intera descrizione deve iniziare con <i> e finire con </i> per essere in corsivo. I nomi importanti dentro la descrizione saranno quindi scritti come <b>Nome Giocatore</b>.
     - Lascia sempre una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
-    - Sii storicamente preciso: non inventare mai date, trasferimenti o risultati.
+    - Sii storicamente preciso: non inventare mai dati o risultati.
     """
 
-    prompt = f"Trova e descrivi in modo sintetico e ben spaziato gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus."
+    prompt = f"Trova e descrivi in modo sintetico gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus."
 
     response = client.models.generate_content(
         model='gemini-3.5-flash',
@@ -63,8 +63,8 @@ def ottieni_accade_oggi():
     # Applica la conversione degli anni (es. 1973 -> 1️⃣9️⃣7️⃣3️⃣)
     testo_formattato = converti_anno_in_emoji(testo_gemini)
 
-    # Costruisce il messaggio finale inserendo il titolo principale in bold e la firma
-    titolo_principale = f"*👀🔙 ACCADDE OGGI - {data_italiana}*\n\n"
+    # Costruisce il messaggio finale usando la formattazione HTML
+    titolo_principale = f"<b>👀🔙 ACCADDE OGGI - {data_italiana}</b>\n\n"
     firma_finale = "\n\n👉 @Juventus_Reborn"
     
     return f"{titolo_principale}{testo_formattato}{firma_finale}"
@@ -75,10 +75,11 @@ def invia_a_telegram(testo):
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     
+    # Cambiato il parse_mode in HTML per evitare l'errore 400 di Telegram
     payload = {
         'chat_id': chat_id,
         'text': testo,
-        'parse_mode': 'Markdown'
+        'parse_mode': 'HTML'
     }
     
     data = urllib.parse.urlencode(payload).encode('utf-8')
@@ -93,12 +94,12 @@ if __name__ == "__main__":
         exit(1)
 
     try:
-        print("Generazione testo personalizzato...")
+        print("Generazione testo personalizzato (HTML)...")
         rubrica = ottieni_accade_oggi()
         
         print("Invio a Telegram...")
         invia_a_telegram(rubrica)
-        print("Inviato con successo con la formattazione corretta!")
+        print("Inviato con successo senza errori!")
         
     except Exception as e:
         print(f"Errore: {e}")
