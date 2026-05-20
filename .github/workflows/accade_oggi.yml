@@ -1,4 +1,4 @@
-name: Rubrica Accade Oggi - Juventus Reborn
+name: Rubrica Accade Oggi
 
 on:
   workflow_dispatch: # Ti permette di avviarlo manualmente quando vuoi
