@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import urllib.request
 import urllib.parse
 from datetime import datetime
@@ -20,33 +19,8 @@ def converti_anno_in_emoji(testo):
     
     return re.sub(r'\b\d{4}\b', rimpiazza, testo)
 
-def cerca_immagine_google(query):
-    """Cerca un'immagine su Google Custom Search e restituisce l'URL del primo risultato"""
-    cx = os.environ.get("GOOGLE_SEARCH_CX")
-    key = os.environ.get("GOOGLE_SEARCH_KEY")
-    
-    params = {
-        'q': query,
-        'cx': cx,
-        'key': key,
-        'searchType': 'image',
-        'num': 1,
-        'safe': 'active'
-    }
-    url = f"https://www.googleapis.com/customsearch/v1?{urllib.parse.urlencode(params)}"
-    
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            if 'items' in data and len(data['items']) > 0:
-                return data['items'][0]['link']
-    except Exception as e:
-        print(f"Errore durante la ricerca dell'immagine: {e}")
-    return None
-
 def ottieni_accade_oggi():
-    # Recupera la data odierna ed imposta il mese in italiano
+    # 1. Recupera la data di oggi e imposta i mesi in italiano
     oggi = datetime.now()
     mesi_ita = {
         1: "GENNAIO", 2: "FEBBRAIO", 3: "MARZO", 4: "APRILE", 5: "MAGGIO", 6: "GIUGNO",
@@ -56,24 +30,24 @@ def ottieni_accade_oggi():
 
     client = Client()
 
-    # Istruzioni tassative per ottenere una struttura JSON pulita e HTML valido
+    # Istruzioni tassative con tag HTML per garantire massima stabilità ed evitare testi appiccicati
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
-    Devi restituire l'output strutturato rigorosamente in formato JSON valido con queste due chiavi:
-    1. "testo": Il contenuto del post formattato in HTML per Telegram. Segui queste regole di stile:
-       - NON inserire alcun titolo principale del post (es. "ACCADDE OGGI"). Inizia subito con il primo evento storico.
-       - Seleziona al massimo 2 o 3 eventi storici principali accaduti in questo giorno.
-       - Struttura riga per riga di ogni evento:
-         ANNO - <b>Titolo Breve in Grassetto</b>\\n<i>Descrizione breve, massima sintesi in due righe. Metti in grassetto (<b>Nome</b>) solo i protagonisti importanti all'interno del testo.</i>
-       - Ricorda di racchiudere l'intera riga descrittiva tra i tag <i> e </i> per renderla completamente in corsivo.
-       - Lascia sempre una riga vuota tra un blocco evento e quello successivo.
-    2. "query_ricerca": Una stringa di parole chiave (breve e mirata) per trovare su Google Immagini la foto storica d'archivio legata all'evento più importante del giorno (Es: "Juventus 1973 scudetto Cuccureddu" o "Del Piero addio Juventus 2012").
-    
-    Sii storicamente preciso. Non inventare eventi o date. Restituisci esclusivamente il JSON puro, senza blocchi di codice markdown.
+    Regole tassative di stile e formattazione HTML per Telegram:
+    - NON inserire il titolo principale del post. Inizia direttamente con il primo evento.
+    - Seleziona al massimo 2 o 3 eventi storici principali del giorno.
+    - Ogni evento deve seguire rigorosamente questa struttura a due righe separate, usando i tag HTML <b> e <i>:
+      
+      ANNO - <b>Titolo dell'Evento in Grassetto</b>
+      <i>Descrizione molto breve di massimo due ragioni o righe. Metti in grassetto (usando <b>nome</b>) solo i nomi dei protagonisti.</i>
+      
+    - Nota bene: l'intera descrizione deve iniziare con <i> e finire con </i> per essere in corsivo.
+    - Lascia sempre una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
+    - Sii storicamente preciso: non inventare mai dati o risultati.
     """
 
-    prompt = f"Trova gli eventi del giorno {data_italiana} nella storia della Juventus e genera il JSON richiesto."
+    prompt = f"Trova e descrivi in modo sintetico gli eventi più importanti accaduti il giorno {data_italiana} nella storia della Juventus."
 
     response = client.models.generate_content(
         model='gemini-3.5-flash',
@@ -81,44 +55,32 @@ def ottieni_accade_oggi():
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             temperature=0.2,
-            response_mime_type="application/json"
         )
     )
 
-    data_json = json.loads(response.text.strip())
+    testo_gemini = response.text.strip()
     
-    # Converte gli anni testuali (es. 1973) in numeri racchiusi dentro le emoji (1️⃣9️⃣7️⃣3️⃣)
-    testo_pulito = converti_anno_in_emoji(data_json["testo"])
-    
-    # Compone il blocco definitivo con intestazione in grassetto e firma del canale
+    # Applica la conversione degli anni (es. 1973 -> 1️⃣9️⃣7️⃣3️⃣)
+    testo_formattato = converti_anno_in_emoji(testo_gemini)
+
+    # Costruisce il messaggio finale usando la formattazione HTML
     titolo_principale = f"<b>👀🔙 ACCADDE OGGI - {data_italiana}</b>\n\n"
     firma_finale = "\n\n👉 @Juventus_Reborn"
     
-    testo_completo = f"{titolo_principale}{testo_pulito}{firma_finale}"
-    
-    return testo_completo, data_json["query_ricerca"]
+    return f"{titolo_principale}{testo_formattato}{firma_finale}"
 
-def invia_foto_telegram(testo, url_foto):
+def invia_a_telegram(testo):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    # Se la ricerca Google ha trovato un'immagine valida usa sendPhoto, altrimenti ripiega sul testo semplice
-    if url_foto:
-        url = f"https://api.telegram.org/bot{token}/sendPhoto"
-        payload = {
-            'chat_id': chat_id,
-            'photo': url_foto,
-            'caption': testo,
-            'parse_mode': 'HTML'
-        }
-    else:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {
-            'chat_id': chat_id,
-            'text': testo,
-            'parse_mode': 'HTML'
-        }
-        
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    
+    payload = {
+        'chat_id': chat_id,
+        'text': testo,
+        'parse_mode': 'HTML'
+    }
+    
     data = urllib.parse.urlencode(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data)
     
@@ -127,23 +89,16 @@ def invia_foto_telegram(testo, url_foto):
 
 if __name__ == "__main__":
     if not all([os.environ.get("GEMINI_API_KEY"), os.environ.get("TELEGRAM_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")]):
-        print("Errore: Variabili d'ambiente di Telegram o Gemini mancanti.")
+        print("Errore: Mancano variabili d'ambiente.")
         exit(1)
 
     try:
-        print("Generazione testo e query con Gemini...")
-        rubrica, query_foto = ottieni_accade_oggi()
-        print(f"Query di ricerca generata con successo: '{query_foto}'")
+        print("Generazione testo personalizzato (HTML)...")
+        rubrica = ottieni_accade_oggi()
         
-        url_immagine = None
-        if os.environ.get("GOOGLE_SEARCH_CX") and os.environ.get("GOOGLE_SEARCH_KEY"):
-            print("Esecuzione ricerca immagine su Google...")
-            url_immagine = cerca_immagine_google(query_foto)
-            print(f"URL immagine trovato: {url_immagine}")
-        
-        print("Invio del post su Telegram...")
-        invia_foto_telegram(rubrica, url_immagine)
-        print("Procedura completata con successo!")
+        print("Invio a Telegram...")
+        invia_a_telegram(rubrica)
+        print("Inviato con successo senza errori!")
         
     except Exception as e:
-        print(f"Errore generale del processo: {e}")
+        print(f"Errore: {e}")
