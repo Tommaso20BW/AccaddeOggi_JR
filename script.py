@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import random
 import urllib.request
 import urllib.parse
 from datetime import datetime
@@ -12,12 +14,34 @@ def converti_anno_in_emoji(testo):
         '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
         '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
     }
-    
+
     def rimpiazza(match):
         anno = match.group(0)
         return "".join(emoji_numeri[c] for c in anno)
-    
+
     return re.sub(r'\b\d{4}\b', rimpiazza, testo)
+
+def chiama_gemini_con_retry(client, model, prompt, config, max_retries=5):
+    """Chiama l'API Gemini con retry esponenziale in caso di 503."""
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config
+            )
+            return response
+        except Exception as e:
+            errore = str(e)
+            if "503" in errore or "UNAVAILABLE" in errore:
+                if attempt < max_retries - 1:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"Tentativo {attempt + 1}/{max_retries} fallito (503). Riprovo tra {wait:.1f}s...")
+                    time.sleep(wait)
+                else:
+                    raise Exception(f"Gemini non disponibile dopo {max_retries} tentativi.") from e
+            else:
+                raise
 
 def ottieni_accade_oggi():
     oggi = datetime.now()
@@ -29,7 +53,6 @@ def ottieni_accade_oggi():
 
     client = Client()
 
-    # Istruzioni aggiornate: SOLO CORSIVO nella descrizione, nessun grassetto all'interno
     system_instruction = """
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
@@ -51,42 +74,40 @@ def ottieni_accade_oggi():
 
     prompt = f"Trova le partite storiche, i trofei o i record di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI) e inserisci i 3 più importanti nel formato richiesto. La descrizione deve essere solo in corsivo senza grassetti."
 
-    response = client.models.generate_content(
-        model='gemini-3.5-flash',
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.1,
-        )
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=0.1,
     )
 
+    response = chiama_gemini_con_retry(client, 'gemini-3.5-flash', prompt, config)
+
     testo_gemini = response.text.strip()
-    
+
     if testo_gemini.upper() == "VUOTO" or not testo_gemini:
         return None
-    
+
     testo_formattato = converti_anno_in_emoji(testo_gemini)
 
     titolo_principale = f"<b>👀🔙 ACCADDE OGGI | {data_italiana}</b>\n\n"
     firma_finale = "\n\n👉 @Juventus_Reborn"
-    
+
     return f"{titolo_principale}{testo_formattato}{firma_finale}"
 
 def invia_a_telegram(testo):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
+
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    
+
     payload = {
         'chat_id': chat_id,
         'text': testo,
         'parse_mode': 'HTML'
     }
-    
+
     data = urllib.parse.urlencode(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data)
-    
+
     with urllib.request.urlopen(req) as response:
         return response.read()
 
@@ -98,13 +119,13 @@ if __name__ == "__main__":
     try:
         print("Generazione testo personalizzato (HTML)...")
         rubrica = ottieni_accade_oggi()
-        
+
         if rubrica is None:
             print("Nessun evento importante trovato per oggi. L'invio a Telegram è stato annullato.")
         else:
             print("Invio a Telegram...")
             invia_a_telegram(rubrica)
             print("Inviato con successo!")
-        
+
     except Exception as e:
         print(f"Errore: {e}")
