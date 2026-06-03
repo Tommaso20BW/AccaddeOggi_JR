@@ -60,7 +60,7 @@ def ottieni_accade_oggi():
     - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
     - ESCLUSIONI ASSOLUTE: NON inserire mai sconfitte, eliminazioni, o risultati negativi per la Juventus. Solo eventi in cui la Juventus ha vinto, conquistato un trofeo o stabilito un record positivo.
     - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
-    - Di tutti gli eventi validi trovati (esclusi i compleanni), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
+    - Di tutti gli eventi validi trovati (esclusi i compleanni e le sconfitte), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
     - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
     - Se invece ci sono eventi importanti, NON inserire il titolo principale del post e inizia direttamente con il primo evento seguendo questa struttura:
       
@@ -73,11 +73,11 @@ def ottieni_accade_oggi():
     - Sii storicamente preciso e ordinali dal più vecchio al più recente.
     """
 
-    prompt = f"Trova le partite storiche, i trofei o i record di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI) e inserisci i 3 più importanti nel formato richiesto. La descrizione deve essere solo in corsivo senza grassetti."
+    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI) e inserisci i 3 più importanti nel formato richiesto. La descrizione deve essere solo in corsivo senza grassetti."
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        temperature=0.1,
+        temperature=0.0,
     )
 
     response = chiama_gemini_con_retry(client, 'gemini-3.5-flash', prompt, config)
