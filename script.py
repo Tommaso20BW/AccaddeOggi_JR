@@ -58,6 +58,7 @@ def ottieni_accade_oggi():
     
     Regole tassative di selezione, stile e formattazione HTML per Telegram:
     - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
+    - ESCLUSIONI ASSOLUTE: NON inserire mai sconfitte, eliminazioni, o risultati negativi per la Juventus. Solo eventi in cui la Juventus ha vinto, conquistato un trofeo o stabilito un record positivo.
     - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
     - Di tutti gli eventi validi trovati (esclusi i compleanni), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
     - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
