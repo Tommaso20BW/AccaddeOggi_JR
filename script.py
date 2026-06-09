@@ -57,6 +57,7 @@ def ottieni_accade_oggi():
     Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
     
     Regole tassative di selezione, stile e formattazione HTML per Telegram:
+    - Usa la ricerca Google per VERIFICARE che ogni evento sia realmente accaduto nel giorno esatto indicato. Non riportare mai un evento senza averne confermato la data sul web. Se non riesci a confermare la data, scarta l'evento.
     - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
     - ESCLUSIONI ASSOLUTE: NON inserire mai sconfitte, eliminazioni, o risultati negativi per la Juventus. Solo eventi in cui la Juventus ha vinto, conquistato un trofeo o stabilito un record positivo.
     - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
@@ -69,15 +70,22 @@ def ottieni_accade_oggi():
       
     - REGOLA PER IL TITOLO: Il titolo in grassetto deve essere super sintetico, un flash di massimo 3 o 4 parole (Es: "Trionfo in Coppa Italia", "Rimonta pazzesca", "Scudetto numero 22").
     - REGOLA PER LA DESCRIZIONE: L'intera descrizione sotto al titolo deve essere racchiusa UNICAMENTE tra i tag <i> e </i>. Non inserire MAI tag di grassetto (<b>) all'interno della descrizione, nemmeno per i nomi di giocatori o allenatori. Deve essere tutto esclusivamente in corsivo pulito.
+    - NON inserire MAI link, URL, fonti, note o citazioni nel testo, anche se hai usato la ricerca per verificare gli eventi. L'output deve contenere solo gli eventi nel formato richiesto.
     - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
     - Sii storicamente preciso e ordinali dal più vecchio al più recente.
     """
 
-    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI) e inserisci i 3 più importanti nel formato richiesto. La descrizione deve essere solo in corsivo senza grassetti."
+    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI) e inserisci i 3 più importanti nel formato richiesto. Verifica la data di ogni evento con la ricerca prima di includerlo. La descrizione deve essere solo in corsivo senza grassetti."
+
+    # Grounding con Google Search: il modello verifica gli eventi sul web
+    # invece di affidarsi alla memoria, riducendo drasticamente le date sbagliate.
+    grounding_tool = types.Tool(
+        google_search=types.GoogleSearch()
+    )
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        temperature=0.0,
+        tools=[grounding_tool],
     )
 
     response = chiama_gemini_con_retry(client, 'gemini-3.5-flash', prompt, config)
