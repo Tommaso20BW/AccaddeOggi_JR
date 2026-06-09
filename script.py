@@ -88,7 +88,7 @@ def ottieni_accade_oggi():
         tools=[grounding_tool],
     )
 
-    response = chiama_gemini_con_retry(client, 'gemini-3.5-flash', prompt, config)
+    response = chiama_gemini_con_retry(client, 'gemini-2.5-flash', prompt, config)
 
     testo_gemini = response.text.strip()
 
