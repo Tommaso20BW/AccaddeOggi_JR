@@ -21,6 +21,14 @@ def converti_anno_in_emoji(testo):
 
     return re.sub(r'\b\d{4}\b', rimpiazza, testo)
 
+def converti_markdown_in_html(testo):
+    """Converte la formattazione Markdown di Gemini in tag HTML per Telegram."""
+    # **testo** → <b>testo</b>
+    testo = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', testo)
+    # _testo_ → <i>testo</i> (solo se non è parte di una parola)
+    testo = re.sub(r'(?<!\w)_(.*?)_(?!\w)', r'<i>\1</i>', testo, flags=re.DOTALL)
+    return testo
+
 def chiama_gemini_con_retry(client, model, prompt, config, max_retries=5):
     """Chiama l'API Gemini con retry esponenziale in caso di 503."""
     for attempt in range(max_retries):
@@ -70,6 +78,7 @@ def ottieni_accade_oggi():
       
     - REGOLA PER IL TITOLO: Il titolo in grassetto deve essere super sintetico, un flash di massimo 3 o 4 parole (Es: "Trionfo in Coppa Italia", "Rimonta pazzesca", "Scudetto numero 22").
     - REGOLA PER LA DESCRIZIONE: L'intera descrizione sotto al titolo deve essere racchiusa UNICAMENTE tra i tag <i> e </i>. Non inserire MAI tag di grassetto (<b>) all'interno della descrizione, nemmeno per i nomi di giocatori o allenatori. Deve essere tutto esclusivamente in corsivo pulito.
+    - NON usare MAI la sintassi Markdown (asterischi, underscore). Usa esclusivamente tag HTML: <b> per il grassetto e <i> per il corsivo.
     - NON inserire MAI link, URL, fonti, note o citazioni nel testo, anche se hai usato la ricerca per verificare gli eventi. L'output deve contenere solo gli eventi nel formato richiesto.
     - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
     - Sii storicamente preciso e ordinali dal più vecchio al più recente.
@@ -94,6 +103,9 @@ def ottieni_accade_oggi():
 
     if testo_gemini.upper() == "VUOTO" or not testo_gemini:
         return None
+
+    # Prima converti il Markdown in HTML (prima degli anni, per non confondere le regex)
+    testo_gemini = converti_markdown_in_html(testo_gemini)
 
     testo_formattato = converti_anno_in_emoji(testo_gemini)
 
