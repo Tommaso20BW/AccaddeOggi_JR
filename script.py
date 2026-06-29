@@ -68,6 +68,7 @@ def ottieni_accade_oggi():
     - Usa la ricerca Google per VERIFICARE che ogni evento sia realmente accaduto nel giorno esatto indicato. Non riportare mai un evento senza averne confermato la data sul web. Se non riesci a confermare la data, scarta l'evento.
     - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
     - ESCLUSIONI ASSOLUTE: NON inserire mai sconfitte, eliminazioni, o risultati negativi per la Juventus. Solo eventi in cui la Juventus ha vinto, conquistato un trofeo o stabilito un record positivo.
+    - SOLO PRIMA SQUADRA MASCHILE: Considera ESCLUSIVAMENTE eventi della prima squadra maschile della Juventus. È TASSATIVAMENTE VIETATO inserire eventi riguardanti Juventus Women (femminile), Juventus Next Gen / Under 23, Primavera, e qualsiasi squadra giovanile o del settore femminile/giovanile. Se un evento riguarda una di queste squadre, scartalo sempre.
     - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
     - Di tutti gli eventi validi trovati (esclusi i compleanni e le sconfitte), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
     - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
@@ -84,7 +85,7 @@ def ottieni_accade_oggi():
     - Sii storicamente preciso e ordinali dal più vecchio al più recente.
     """
 
-    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi di squadra accaduti il giorno {data_italiana} nella storia della Juventus (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI) e inserisci i 3 più importanti nel formato richiesto. Verifica la data di ogni evento con la ricerca prima di includerlo. La descrizione deve essere solo in corsivo senza grassetti."
+    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi della PRIMA SQUADRA MASCHILE della Juventus accaduti il giorno {data_italiana} (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI, NO Women, NO Next Gen/Under 23, NO Primavera o giovanili) e inserisci i 3 più importanti nel formato richiesto. Verifica la data di ogni evento con la ricerca prima di includerlo. La descrizione deve essere solo in corsivo senza grassetti."
 
     # Grounding con Google Search: il modello verifica gli eventi sul web
     # invece di affidarsi alla memoria, riducendo drasticamente le date sbagliate.
