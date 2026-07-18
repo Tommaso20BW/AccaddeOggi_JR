@@ -5,8 +5,34 @@ import random
 import urllib.request
 import urllib.parse
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from google.genai import Client
 from google.genai import types
+
+# Orario esatto (ora italiana) in cui deve iniziare la generazione/invio.
+# Il trigger esterno (cron-job.org) puo' avviare il job qualche minuto prima
+# come buffer anti-ritardo: lo script aspetta comunque fino a questo orario.
+ORA_INVIO = (7, 30)  # (ore, minuti) - modifica qui se vuoi cambiare orario
+FUSO_ORARIO = ZoneInfo("Europe/Rome")
+
+
+def attendi_orario_preciso(ora, minuto, fuso, margine_massimo_minuti=15):
+    """Aspetta fino a ora:minuto (ora italiana). Se il workflow parte in ritardo
+    oltre il margine massimo, procede subito senza aspettare oltre."""
+    ora_corrente = datetime.now(fuso)
+    target = ora_corrente.replace(hour=ora, minute=minuto, second=0, microsecond=0)
+
+    secondi_attesa = (target - ora_corrente).total_seconds()
+
+    if secondi_attesa <= 0:
+        return
+
+    if secondi_attesa > margine_massimo_minuti * 60:
+        print(f"Attesa di {secondi_attesa/60:.1f} minuti fuori dal margine, procedo subito.")
+        return
+
+    print(f"Attendo {secondi_attesa:.0f} secondi per raggiungere le {ora:02d}:{minuto:02d} ora italiana...")
+    time.sleep(secondi_attesa)
 
 def converti_anno_in_emoji(testo):
     """Trova gli anni a 4 cifre nel testo e li converte in numeri emoji quadrate (es. 1️⃣9️⃣7️⃣3️⃣)"""
@@ -139,6 +165,8 @@ if __name__ == "__main__":
         exit(1)
 
     try:
+        attendi_orario_preciso(ORA_INVIO[0], ORA_INVIO[1], FUSO_ORARIO)
+
         print("Generazione testo personalizzato (HTML)...")
         rubrica = ottieni_accade_oggi()
 
