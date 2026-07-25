@@ -1,0 +1,2 @@
+google-genai==2.14.0
+tzdata==2026.3
