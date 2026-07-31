@@ -19,7 +19,7 @@ Sono esclusi vittorie ordinarie, amichevoli, compleanni, ricorrenze, mercato, es
 La generazione avviene in due passaggi separati:
 
 1. Gemini cerca un massimo di cinque candidati tramite Google Search.
-2. Un secondo controllo riparte dalle fonti, verifica giorno, mese e anno esatti, richiede almeno due domini indipendenti e conserva al massimo due eventi.
+2. Un secondo controllo riparte dalle fonti, verifica giorno, mese e anno esatti, richiede almeno due domini indipendenti e conserva al massimo tre eventi. Il numero non viene mai riempito artificialmente: possono uscirne anche due, uno o nessuno.
 
 Il codice applica poi controlli deterministici sul JSON ricevuto. Gli eventi inviati vengono registrati in [`data/eventi_pubblicati.json`](data/eventi_pubblicati.json) con un'identità canonica basata su anno, categoria, competizione e avversario. Prima di ogni invio, il nuovo risultato viene confrontato con tutto lo storico anche in forma approssimata: così lo stesso fatto viene scartato anche se Gemini cambia titolo, descrizione o gli attribuisce un altro giorno.
 

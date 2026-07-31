@@ -22,7 +22,7 @@ from google.genai import types
 ORA_INVIO = (7, 30)
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
 MODELLO_GEMINI = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-MASSIMO_EVENTI = 2
+MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 9
 PERCORSO_STORICO = Path(
     os.environ.get(
@@ -256,7 +256,8 @@ HTML, Markdown, enfasi, URL o citazioni. canonical_id deve identificare il fatto
 non la data di pubblicazione: ANNO|CATEGORIA|COMPETIZIONE_O_RECORD|AVVERSARIO_O_NESSUNO.
 Gli outcome ammessi sono TROFEO_CONQUISTATO per TROFEO, SCUDETTO_CONQUISTATO per
 SCUDETTO, VITTORIA per PARTITA_ICONICA e RECORD_POSITIVO per RECORD_STORICO.
-Restituisci al massimo 2 eventi, dal piu' vecchio al piu' recente.
+Restituisci al massimo 3 eventi, dal piu' vecchio al piu' recente. Non abbassare
+mai la soglia di importanza per arrivare a tre: anche zero, uno o due sono corretti.
 """
     prompt = (
         f"La ricorrenza richiesta e' il {data_italiana}, giorno e mese {giorno_mese}, "

@@ -67,6 +67,21 @@ class TestRisposteGemini(unittest.TestCase):
         impossibile = evento_valido(event_date="1996-02-30")
         self.assertEqual(script.valida_eventi([impossibile], "02-30"), [])
 
+    def test_conserva_al_massimo_tre_eventi_importanti(self):
+        eventi = [
+            evento_valido(
+                event_date=f"{anno}-05-22",
+                year=anno,
+                canonical_id=f"{anno}|TROFEO|COMPETIZIONE_{anno}|AVVERSARIO",
+            )
+            for anno in (1996, 2000, 2005, 2010)
+        ]
+
+        risultato = script.valida_eventi(eventi, "05-22")
+
+        self.assertEqual(len(risultato), 3)
+        self.assertEqual([evento["year"] for evento in risultato], [1996, 2000, 2005])
+
 
 class TestDuplicati(unittest.TestCase):
     def test_stesso_evento_con_testo_e_giorno_diversi_viene_riconosciuto(self):
