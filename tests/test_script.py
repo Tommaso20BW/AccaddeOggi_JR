@@ -11,6 +11,7 @@ def evento_valido(**modifiche):
         "event_date": "1996-05-22",
         "year": 1996,
         "category": "TROFEO",
+        "outcome": "TROFEO_CONQUISTATO",
         "importance": 10,
         "competition": "UEFA Champions League",
         "opponent": "Ajax",
@@ -35,8 +36,11 @@ class TestRisposteGemini(unittest.TestCase):
         valido = evento_valido()
         data_errata = evento_valido(event_date="1996-05-23")
         ordinario = evento_valido(importance=8)
-        iconica_non_eccezionale = evento_valido(
-            category="PARTITA_ICONICA", importance=9
+        iconica_da_nove = evento_valido(
+            category="PARTITA_ICONICA", outcome="VITTORIA", importance=9
+        )
+        sconfitta_iconica = evento_valido(
+            category="PARTITA_ICONICA", outcome="SCONFITTA", importance=10
         )
         fonte_unica = evento_valido(
             source_urls=[
@@ -50,13 +54,14 @@ class TestRisposteGemini(unittest.TestCase):
                 valido,
                 data_errata,
                 ordinario,
-                iconica_non_eccezionale,
+                iconica_da_nove,
+                sconfitta_iconica,
                 fonte_unica,
             ],
             "05-22",
         )
 
-        self.assertEqual(risultato, [valido])
+        self.assertEqual(risultato, [valido, iconica_da_nove])
 
     def test_rifiuta_una_data_di_calendario_impossibile(self):
         impossibile = evento_valido(event_date="1996-02-30")

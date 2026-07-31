@@ -10,7 +10,9 @@ Il bot pubblica soltanto eventi di rilievo storico eccezionale:
 - partita universalmente riconosciuta come iconica, non un normale big match;
 - record positivo di squadra di importanza nazionale o europea.
 
-Sono esclusi vittorie ordinarie, amichevoli, compleanni, ricorrenze, mercato, esordi, gol e record individuali, oltre a sconfitte, eliminazioni, Women, Next Gen, Primavera e giovanili. Trofei e Scudetti richiedono almeno **9/10**; partite iconiche e record di squadra devono ottenere **10/10**. Se nessun fatto supera la soglia della propria categoria, il bot non pubblica.
+Come riferimento, la rimonta **Juventus–Atlético Madrid 3-0 del 12 marzo 2019** è una partita iconica ammessa; una normale vittoria contro una grande squadra non basta.
+
+Sono esclusi vittorie ordinarie, amichevoli, compleanni, ricorrenze, mercato, esordi, gol e record individuali, oltre a sconfitte, eliminazioni, Women, Next Gen, Primavera e giovanili. Per tutte le categorie passano esclusivamente gli eventi valutati **9/10 o 10/10**. Da 8/10 in giù il bot non pubblica. Il codice richiede inoltre un esito positivo coerente con la categoria: vittoria, trofeo conquistato, Scudetto conquistato o record positivo.
 
 ## Controlli contro errori e duplicati
 

@@ -23,6 +23,7 @@ ORA_INVIO = (7, 30)
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
 MODELLO_GEMINI = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 MASSIMO_EVENTI = 2
+SOGLIA_IMPORTANZA = 9
 PERCORSO_STORICO = Path(
     os.environ.get(
         "EVENT_HISTORY_FILE",
@@ -36,11 +37,11 @@ CATEGORIE_AMMESSE = {
     "PARTITA_ICONICA",
     "RECORD_STORICO",
 }
-SOGLIE_CATEGORIA = {
-    "TROFEO": 9,
-    "SCUDETTO": 9,
-    "PARTITA_ICONICA": 10,
-    "RECORD_STORICO": 10,
+ESITO_RICHIESTO_PER_CATEGORIA = {
+    "TROFEO": "TROFEO_CONQUISTATO",
+    "SCUDETTO": "SCUDETTO_CONQUISTATO",
+    "PARTITA_ICONICA": "VITTORIA",
+    "RECORD_STORICO": "RECORD_POSITIVO",
 }
 
 STOPWORD_IDENTITA = {
@@ -175,6 +176,10 @@ Un evento e' candidabile solo se appartiene a uno di questi casi:
 3. record positivo di squadra di importanza nazionale o europea, storico e
    ampiamente riconosciuto.
 
+Usa come riferimento editoriale Juventus-Atletico Madrid 3-0 del 12 marzo 2019:
+una rimonta europea di quel peso e' una PARTITA_ICONICA da pubblicare. Un normale
+big match, anche se vinto nettamente, non raggiunge automaticamente quella soglia.
+
 Scarta senza eccezioni: normali vittorie di campionato o coppa, amichevoli,
 compleanni, nascite, morti, acquisti, cessioni, rinnovi, presentazioni, esordi,
 singoli gol, presenze o record individuali, anniversari, sorteggi, premiazioni,
@@ -184,11 +189,13 @@ restituire zero eventi invece di riempire il post.
 
 Rispondi esclusivamente con JSON valido, senza Markdown, in questa forma:
 {"events":[{"event_date":"data storica YYYY-MM-DD","year":1234,
-"category":"categoria ammessa","competition":"competizione o record",
+"category":"categoria ammessa","outcome":"esito positivo ammesso",
+"competition":"competizione o record",
 "opponent":"avversario oppure stringa vuota","title":"titolo breve",
 "description":"una frase fattuale breve","reason":"motivo del rilievo storico"}]}
 Inserisci al massimo 5 candidati. Le categorie consentite sono TROFEO, SCUDETTO,
-PARTITA_ICONICA e RECORD_STORICO.
+PARTITA_ICONICA e RECORD_STORICO. Gli unici outcome consentiti sono rispettivamente
+TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA e RECORD_POSITIVO.
 """
     prompt = (
         f"Cerca eventi juventini di importanza eccezionale avvenuti il {data_italiana} "
@@ -219,12 +226,18 @@ verifica ogni candidato da zero con Google Search. Approva un evento soltanto se
 - le fonti confermano il giorno, mese e anno esatti, non soltanto l'anno o un
   articolo commemorativo pubblicato nella data richiesta;
 - riguarda la prima squadra maschile della Juventus;
-- raggiunge la fascia massima nella scala seguente: 10 conquista di Champions/Coppa
-  dei Campioni oppure una delle imprese o dei record di squadra piu' celebri e
+- non e' una sconfitta, un'eliminazione o un evento negativo, anche se famoso;
+- raggiunge almeno 9/10 nella scala seguente: 10 conquista di Champions/Coppa dei
+  Campioni oppure una delle imprese o dei record di squadra piu' celebri e
   indiscutibili dell'intera storia del club; 9 conquista di un altro trofeo
-  ufficiale o Scudetto matematico; 8 o meno normale vittoria, big match, turno
+  ufficiale, Scudetto matematico, impresa universalmente iconica o record storico
+  di squadra nazionale/europeo; 8 o meno normale vittoria, big match, turno
   preliminare, traguardo individuale o curiosita'. Gli eventi con voto 8 o meno
-  vanno scartati. PARTITA_ICONICA e RECORD_STORICO richiedono sempre 10/10.
+  vanno scartati.
+
+Benchmark editoriale: Juventus-Atletico Madrid 3-0 del 12 marzo 2019 e' una
+PARTITA_ICONICA che raggiunge la soglia; una normale vittoria contro una grande
+squadra non basta.
 
 Non promuovere un candidato solo per arrivare a un certo numero. Zero eventi e' un
 esito corretto. Correggi i dettagli inesatti, ma se la data reale non coincide con
@@ -232,7 +245,7 @@ quella richiesta scarta l'evento.
 
 Rispondi esclusivamente con JSON valido, senza Markdown:
 {"events":[{"event_date":"data storica YYYY-MM-DD","year":1234,
-"category":"categoria ammessa","importance":9,
+"category":"categoria ammessa","outcome":"esito positivo ammesso","importance":9,
 "competition":"competizione o record","opponent":"avversario o stringa vuota",
 "title":"titolo da due a cinque parole","description":"una sola frase fattuale breve",
 "canonical_id":"ANNO|CATEGORIA|COMPETIZIONE_O_RECORD|AVVERSARIO_O_NESSUNO",
@@ -241,6 +254,8 @@ Rispondi esclusivamente con JSON valido, senza Markdown:
 Titolo: da 2 a 5 parole. Descrizione: una sola frase, massimo 240 caratteri, senza
 HTML, Markdown, enfasi, URL o citazioni. canonical_id deve identificare il fatto e
 non la data di pubblicazione: ANNO|CATEGORIA|COMPETIZIONE_O_RECORD|AVVERSARIO_O_NESSUNO.
+Gli outcome ammessi sono TROFEO_CONQUISTATO per TROFEO, SCUDETTO_CONQUISTATO per
+SCUDETTO, VITTORIA per PARTITA_ICONICA e RECORD_POSITIVO per RECORD_STORICO.
 Restituisci al massimo 2 eventi, dal piu' vecchio al piu' recente.
 """
     prompt = (
@@ -287,6 +302,7 @@ def valida_eventi(eventi, giorno_mese):
         titolo = str(evento.get("title", "")).strip()
         descrizione = str(evento.get("description", "")).strip()
         categoria = str(evento.get("category", "")).strip().upper()
+        outcome = str(evento.get("outcome", "")).strip().upper()
         canonical_id = str(evento.get("canonical_id", "")).strip()
         competition = str(evento.get("competition", "")).strip()
         opponent = str(evento.get("opponent", "")).strip()
@@ -305,7 +321,9 @@ def valida_eventi(eventi, giorno_mese):
             continue
         if categoria not in CATEGORIE_AMMESSE:
             continue
-        if importanza < SOGLIE_CATEGORIA[categoria]:
+        if outcome != ESITO_RICHIESTO_PER_CATEGORIA[categoria]:
+            continue
+        if importanza < SOGLIA_IMPORTANZA:
             continue
         if not (2 <= len(titolo.split()) <= 5):
             continue
@@ -323,6 +341,7 @@ def valida_eventi(eventi, giorno_mese):
                 "event_date": event_date,
                 "year": anno,
                 "category": categoria,
+                "outcome": outcome,
                 "importance": importanza,
                 "competition": competition,
                 "opponent": opponent,
@@ -413,6 +432,7 @@ def salva_nello_storico(eventi, pubblicato_il, percorso=PERCORSO_STORICO):
                 "event_date": evento["event_date"],
                 "year": evento["year"],
                 "category": evento["category"],
+                "outcome": evento["outcome"],
                 "competition": evento["competition"],
                 "opponent": evento["opponent"],
                 "title": evento["title"],
