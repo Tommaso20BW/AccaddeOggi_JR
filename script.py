@@ -1,181 +1,521 @@
+import html
+import json
 import os
-import re
-import time
 import random
-import urllib.request
+import re
+import sys
+import time
+import unicodedata
 import urllib.parse
+import urllib.request
+from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
 from google.genai import Client
 from google.genai import types
 
-# Orario esatto (ora italiana) in cui deve iniziare la generazione/invio.
-# Il trigger esterno (cron-job.org) puo' avviare il job qualche minuto prima
-# come buffer anti-ritardo: lo script aspetta comunque fino a questo orario.
-ORA_INVIO = (7, 30)  # (ore, minuti) - modifica qui se vuoi cambiare orario
+
+ORA_INVIO = (7, 30)
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
+MODELLO_GEMINI = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MASSIMO_EVENTI = 2
+PERCORSO_STORICO = Path(
+    os.environ.get(
+        "EVENT_HISTORY_FILE",
+        Path(__file__).resolve().parent / "data" / "eventi_pubblicati.json",
+    )
+)
+
+CATEGORIE_AMMESSE = {
+    "TROFEO",
+    "SCUDETTO",
+    "PARTITA_ICONICA",
+    "RECORD_STORICO",
+}
+SOGLIE_CATEGORIA = {
+    "TROFEO": 9,
+    "SCUDETTO": 9,
+    "PARTITA_ICONICA": 10,
+    "RECORD_STORICO": 10,
+}
+
+STOPWORD_IDENTITA = {
+    "a",
+    "al",
+    "alla",
+    "con",
+    "da",
+    "dei",
+    "del",
+    "della",
+    "di",
+    "e",
+    "il",
+    "in",
+    "la",
+    "le",
+    "lo",
+    "per",
+    "the",
+    "un",
+    "una",
+    "juventus",
+}
+
+
+@dataclass
+class Rubrica:
+    testo: str
+    eventi: list[dict]
 
 
 def attendi_orario_preciso(ora, minuto, fuso, margine_massimo_minuti=15):
-    """Aspetta fino a ora:minuto (ora italiana). Se il workflow parte in ritardo
-    oltre il margine massimo, procede subito senza aspettare oltre."""
+    """Attende l'orario di invio se il job parte poco prima del target."""
     ora_corrente = datetime.now(fuso)
     target = ora_corrente.replace(hour=ora, minute=minuto, second=0, microsecond=0)
-
     secondi_attesa = (target - ora_corrente).total_seconds()
 
     if secondi_attesa <= 0:
         return
-
     if secondi_attesa > margine_massimo_minuti * 60:
-        print(f"Attesa di {secondi_attesa/60:.1f} minuti fuori dal margine, procedo subito.")
+        print(
+            f"Attesa di {secondi_attesa / 60:.1f} minuti fuori dal margine, "
+            "procedo subito."
+        )
         return
 
-    print(f"Attendo {secondi_attesa:.0f} secondi per raggiungere le {ora:02d}:{minuto:02d} ora italiana...")
+    print(
+        f"Attendo {secondi_attesa:.0f} secondi per raggiungere le "
+        f"{ora:02d}:{minuto:02d} ora italiana..."
+    )
     time.sleep(secondi_attesa)
 
-def converti_anno_in_emoji(testo):
-    """Trova gli anni a 4 cifre nel testo e li converte in numeri emoji quadrate (es. 1️⃣9️⃣7️⃣3️⃣)"""
+
+def converti_anno_in_emoji(anno):
     emoji_numeri = {
-        '0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
-        '5': '5️⃣', '6': '6️⃣', '7': '7️⃣', '8': '8️⃣', '9': '9️⃣'
+        "0": "0\ufe0f\u20e3",
+        "1": "1\ufe0f\u20e3",
+        "2": "2\ufe0f\u20e3",
+        "3": "3\ufe0f\u20e3",
+        "4": "4\ufe0f\u20e3",
+        "5": "5\ufe0f\u20e3",
+        "6": "6\ufe0f\u20e3",
+        "7": "7\ufe0f\u20e3",
+        "8": "8\ufe0f\u20e3",
+        "9": "9\ufe0f\u20e3",
     }
+    return "".join(emoji_numeri[cifra] for cifra in str(anno))
 
-    def rimpiazza(match):
-        anno = match.group(0)
-        return "".join(emoji_numeri[c] for c in anno)
-
-    return re.sub(r'\b\d{4}\b', rimpiazza, testo)
-
-def converti_markdown_in_html(testo):
-    """Converte la formattazione Markdown di Gemini in tag HTML per Telegram."""
-    # **testo** → <b>testo</b>
-    testo = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', testo)
-    # _testo_ → <i>testo</i> (solo se non è parte di una parola)
-    testo = re.sub(r'(?<!\w)_(.*?)_(?!\w)', r'<i>\1</i>', testo, flags=re.DOTALL)
-    return testo
 
 def chiama_gemini_con_retry(client, model, prompt, config, max_retries=5):
-    """Chiama l'API Gemini con retry esponenziale in caso di 503."""
+    """Chiama Gemini con retry esponenziale per gli errori temporanei."""
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
+            return client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=config
+                config=config,
             )
-            return response
-        except Exception as e:
-            errore = str(e)
-            if "503" in errore or "UNAVAILABLE" in errore:
-                if attempt < max_retries - 1:
-                    wait = (2 ** attempt) + random.uniform(0, 1)
-                    print(f"Tentativo {attempt + 1}/{max_retries} fallito (503). Riprovo tra {wait:.1f}s...")
-                    time.sleep(wait)
-                else:
-                    raise Exception(f"Gemini non disponibile dopo {max_retries} tentativi.") from e
-            else:
+        except Exception as exc:
+            errore = str(exc)
+            temporaneo = any(
+                codice in errore
+                for codice in ("429", "500", "502", "503", "504", "UNAVAILABLE")
+            )
+            if not temporaneo or attempt == max_retries - 1:
                 raise
+            attesa = (2**attempt) + random.uniform(0, 1)
+            print(
+                f"Tentativo {attempt + 1}/{max_retries} fallito. "
+                f"Riprovo tra {attesa:.1f}s..."
+            )
+            time.sleep(attesa)
 
-def ottieni_accade_oggi():
-    oggi = datetime.now()
-    mesi_ita = {
-        1: "GENNAIO", 2: "FEBBRAIO", 3: "MARZO", 4: "APRILE", 5: "MAGGIO", 6: "GIUGNO",
-        7: "LUGLIO", 8: "AGOSTO", 9: "SETTEMBRE", 10: "OTTOBRE", 11: "NOVEMBRE", 12: "DICEMBRE"
-    }
-    data_italiana = f"{oggi.day} {mesi_ita[oggi.month]}".upper()
+    raise RuntimeError("Gemini non disponibile.")
 
-    client = Client()
 
-    system_instruction = """
-    Sei il redattore della pagina Juventus Reborn. Scrivi la rubrica quotidiana "ACCADDE OGGI".
-    
-    Regole tassative di selezione, stile e formattazione HTML per Telegram:
-    - Usa la ricerca Google per VERIFICARE che ogni evento sia realmente accaduto nel giorno esatto indicato. Non riportare mai un evento senza averne confermato la data sul web. Se non riesci a confermare la data, scarta l'evento.
-    - Cerca eventi storici della Juventus accaduti in questo giorno, come: vittorie di trofei/scudetti, grandi record di squadra e PARTITE STORICHE (es. grandi rimonte, vittorie memorabili o storici big match).
-    - ESCLUSIONI ASSOLUTE: NON inserire mai sconfitte, eliminazioni, o risultati negativi per la Juventus. Solo eventi in cui la Juventus ha vinto, conquistato un trofeo o stabilito un record positivo.
-    - SOLO PRIMA SQUADRA MASCHILE: Considera ESCLUSIVAMENTE eventi della prima squadra maschile della Juventus. È TASSATIVAMENTE VIETATO inserire eventi riguardanti Juventus Women (femminile), Juventus Next Gen / Under 23, Primavera, e qualsiasi squadra giovanile o del settore femminile/giovanile. Se un evento riguarda una di queste squadre, scartalo sempre.
-    - TASSETTO: NON INSERIRE MAI I COMPLEANNI di giocatori, ex giocatori o allenatori. Sono totalmente vietati.
-    - Di tutti gli eventi validi trovati (esclusi i compleanni e le sconfitte), seleziona e inserisci RIGOROSAMENTE un MASSIMO DI 3 EVENTI in totale (i più importanti, iconici e significativi).
-    - Se in questo giorno NON ci sono eventi storici di rilievo sul campo per la Juventus, rispondi scrivendo esclusivamente la parola: VUOTO
-    - Se invece ci sono eventi importanti, NON inserire il titolo principale del post e inizia direttamente con il primo evento seguendo questa struttura:
-      
-      ANNO - <b>Titolo dell'Evento in Grassetto</b>
-      <i>Descrizione molto breve di massimo due righe.</i>
-      
-    - REGOLA PER IL TITOLO: Il titolo in grassetto deve essere super sintetico, un flash di massimo 3 o 4 parole (Es: "Trionfo in Coppa Italia", "Rimonta pazzesca", "Scudetto numero 22").
-    - REGOLA PER LA DESCRIZIONE: L'intera descrizione sotto al titolo deve essere racchiusa UNICAMENTE tra i tag <i> e </i>. Non inserire MAI tag di grassetto (<b>) all'interno della descrizione, nemmeno per i nomi di giocatori o allenatori. Deve essere tutto esclusivamente in corsivo pulito.
-    - NON usare MAI la sintassi Markdown (asterischi, underscore). Usa esclusivamente tag HTML: <b> per il grassetto e <i> per il corsivo.
-    - NON inserire MAI link, URL, fonti, note o citazioni nel testo, anche se hai usato la ricerca per verificare gli eventi. L'output deve contenere solo gli eventi nel formato richiesto.
-    - Lascia una riga vuota tra la descrizione di un evento e l'inizio di quello successivo.
-    - Sii storicamente preciso e ordinali dal più vecchio al più recente.
-    """
+def estrai_json(testo):
+    """Estrae un oggetto JSON anche se il modello aggiunge un code fence."""
+    testo = testo.strip()
+    testo = re.sub(r"^```(?:json)?\s*", "", testo, flags=re.IGNORECASE)
+    testo = re.sub(r"\s*```$", "", testo)
+    inizio = testo.find("{")
+    fine = testo.rfind("}")
+    if inizio == -1 or fine == -1 or fine < inizio:
+        raise ValueError("Gemini non ha restituito un oggetto JSON.")
+    valore = json.loads(testo[inizio : fine + 1])
+    if not isinstance(valore, dict):
+        raise ValueError("La risposta JSON di Gemini non e' un oggetto.")
+    return valore
 
-    prompt = f"Trova le partite storiche VINTE, i trofei o i record positivi della PRIMA SQUADRA MASCHILE della Juventus accaduti il giorno {data_italiana} (NO COMPLEANNI, NO SCONFITTE, NO ELIMINAZIONI, NO Women, NO Next Gen/Under 23, NO Primavera o giovanili) e inserisci i 3 più importanti nel formato richiesto. Verifica la data di ogni evento con la ricerca prima di includerlo. La descrizione deve essere solo in corsivo senza grassetti."
 
-    # Grounding con Google Search: il modello verifica gli eventi sul web
-    # invece di affidarsi alla memoria, riducendo drasticamente le date sbagliate.
-    grounding_tool = types.Tool(
-        google_search=types.GoogleSearch()
-    )
-
-    config = types.GenerateContentConfig(
+def _config_con_ricerca(system_instruction):
+    return types.GenerateContentConfig(
         system_instruction=system_instruction,
-        tools=[grounding_tool],
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+        temperature=0.1,
     )
 
-    response = chiama_gemini_con_retry(client, 'gemini-2.5-flash', prompt, config)
 
-    testo_gemini = response.text.strip()
+def scopri_candidati(client, giorno_mese, data_italiana):
+    """Prima passata: trova soltanto possibili eventi di eccezionale rilievo."""
+    istruzioni = """
+Sei un ricercatore di storia della Juventus. Devi proporre candidati, non scrivere
+un post. Usa Google Search e sii estremamente selettivo. Considera esclusivamente
+la prima squadra maschile e soltanto fatti avvenuti esattamente nella data chiesta.
 
-    if testo_gemini.upper() == "VUOTO" or not testo_gemini:
+Un evento e' candidabile solo se appartiene a uno di questi casi:
+1. conquista di un trofeo ufficiale o certezza matematica di uno Scudetto;
+2. partita universalmente ricordata come una delle piu' iconiche della storia del
+   club (finale, impresa europea o rimonta eccezionale), non un normale big match;
+3. record positivo di squadra di importanza nazionale o europea, storico e
+   ampiamente riconosciuto.
+
+Scarta senza eccezioni: normali vittorie di campionato o coppa, amichevoli,
+compleanni, nascite, morti, acquisti, cessioni, rinnovi, presentazioni, esordi,
+singoli gol, presenze o record individuali, anniversari, sorteggi, premiazioni,
+sconfitte, eliminazioni, eventi negativi, Women, Next Gen, Primavera e giovanili.
+Quando il rilievo o la data non sono certi, non proporre l'evento. E' preferibile
+restituire zero eventi invece di riempire il post.
+
+Rispondi esclusivamente con JSON valido, senza Markdown, in questa forma:
+{"events":[{"event_date":"data storica YYYY-MM-DD","year":1234,
+"category":"categoria ammessa","competition":"competizione o record",
+"opponent":"avversario oppure stringa vuota","title":"titolo breve",
+"description":"una frase fattuale breve","reason":"motivo del rilievo storico"}]}
+Inserisci al massimo 5 candidati. Le categorie consentite sono TROFEO, SCUDETTO,
+PARTITA_ICONICA e RECORD_STORICO.
+"""
+    prompt = (
+        f"Cerca eventi juventini di importanza eccezionale avvenuti il {data_italiana} "
+        f"di un qualsiasi anno storico. Giorno e mese devono essere {giorno_mese}; "
+        "event_date deve contenere l'anno reale dell'evento. Non includere eventi "
+        "solo vagamente interessanti e non cambiare giorno per farli rientrare."
+    )
+    risposta = chiama_gemini_con_retry(
+        client,
+        MODELLO_GEMINI,
+        prompt,
+        _config_con_ricerca(istruzioni),
+    )
+    dati = estrai_json(risposta.text or "")
+    eventi = dati.get("events", [])
+    return eventi if isinstance(eventi, list) else []
+
+
+def verifica_candidati(client, candidati, giorno_mese, data_italiana):
+    """Seconda passata: un revisore indipendente verifica data, fonti e rilievo."""
+    if not candidati:
+        return []
+
+    istruzioni = """
+Sei il fact-checker finale di una rubrica Juventus. Non fidarti della lista ricevuta:
+verifica ogni candidato da zero con Google Search. Approva un evento soltanto se:
+- almeno due fonti web affidabili e tra loro indipendenti confermano lo stesso fatto;
+- le fonti confermano il giorno, mese e anno esatti, non soltanto l'anno o un
+  articolo commemorativo pubblicato nella data richiesta;
+- riguarda la prima squadra maschile della Juventus;
+- raggiunge la fascia massima nella scala seguente: 10 conquista di Champions/Coppa
+  dei Campioni oppure una delle imprese o dei record di squadra piu' celebri e
+  indiscutibili dell'intera storia del club; 9 conquista di un altro trofeo
+  ufficiale o Scudetto matematico; 8 o meno normale vittoria, big match, turno
+  preliminare, traguardo individuale o curiosita'. Gli eventi con voto 8 o meno
+  vanno scartati. PARTITA_ICONICA e RECORD_STORICO richiedono sempre 10/10.
+
+Non promuovere un candidato solo per arrivare a un certo numero. Zero eventi e' un
+esito corretto. Correggi i dettagli inesatti, ma se la data reale non coincide con
+quella richiesta scarta l'evento.
+
+Rispondi esclusivamente con JSON valido, senza Markdown:
+{"events":[{"event_date":"data storica YYYY-MM-DD","year":1234,
+"category":"categoria ammessa","importance":9,
+"competition":"competizione o record","opponent":"avversario o stringa vuota",
+"title":"titolo da due a cinque parole","description":"una sola frase fattuale breve",
+"canonical_id":"ANNO|CATEGORIA|COMPETIZIONE_O_RECORD|AVVERSARIO_O_NESSUNO",
+"source_urls":["https://fonte1/...","https://fonte2/..."]}]}
+
+Titolo: da 2 a 5 parole. Descrizione: una sola frase, massimo 240 caratteri, senza
+HTML, Markdown, enfasi, URL o citazioni. canonical_id deve identificare il fatto e
+non la data di pubblicazione: ANNO|CATEGORIA|COMPETIZIONE_O_RECORD|AVVERSARIO_O_NESSUNO.
+Restituisci al massimo 2 eventi, dal piu' vecchio al piu' recente.
+"""
+    prompt = (
+        f"La ricorrenza richiesta e' il {data_italiana}, giorno e mese {giorno_mese}, "
+        "in qualsiasi anno storico. Verifica rigorosamente questi candidati e usa "
+        "in event_date l'anno reale del fatto:\n"
+        f"{json.dumps(candidati, ensure_ascii=False)}"
+    )
+    risposta = chiama_gemini_con_retry(
+        client,
+        MODELLO_GEMINI,
+        prompt,
+        _config_con_ricerca(istruzioni),
+    )
+    dati = estrai_json(risposta.text or "")
+    eventi = dati.get("events", [])
+    return eventi if isinstance(eventi, list) else []
+
+
+def _domini_fonti(urls):
+    domini = set()
+    for url in urls:
+        if not isinstance(url, str):
+            continue
+        parsed = urlparse(url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            dominio = parsed.netloc.lower().removeprefix("www.")
+            domini.add(dominio)
+    return domini
+
+
+def valida_eventi(eventi, giorno_mese):
+    """Applica vincoli deterministici: il prompt da solo non e' una garanzia."""
+    validi = []
+    for evento in eventi:
+        if not isinstance(evento, dict):
+            continue
+        try:
+            anno = int(evento.get("year"))
+            importanza = int(evento.get("importance"))
+        except (TypeError, ValueError):
+            continue
+
+        titolo = str(evento.get("title", "")).strip()
+        descrizione = str(evento.get("description", "")).strip()
+        categoria = str(evento.get("category", "")).strip().upper()
+        canonical_id = str(evento.get("canonical_id", "")).strip()
+        competition = str(evento.get("competition", "")).strip()
+        opponent = str(evento.get("opponent", "")).strip()
+        source_urls = evento.get("source_urls", [])
+
+        event_date = str(evento.get("event_date", ""))
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", event_date):
+            continue
+        if event_date[5:] != giorno_mese:
+            continue
+        try:
+            data_evento = datetime.strptime(event_date, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if anno != data_evento.year or not (1897 <= anno <= datetime.now(FUSO_ORARIO).year):
+            continue
+        if categoria not in CATEGORIE_AMMESSE:
+            continue
+        if importanza < SOGLIE_CATEGORIA[categoria]:
+            continue
+        if not (2 <= len(titolo.split()) <= 5):
+            continue
+        if not descrizione or len(descrizione) > 240:
+            continue
+        if any(segno in titolo + descrizione for segno in ("<", ">", "*", "http")):
+            continue
+        if not canonical_id or len(canonical_id) > 180:
+            continue
+        if not isinstance(source_urls, list) or len(_domini_fonti(source_urls)) < 2:
+            continue
+
+        validi.append(
+            {
+                "event_date": event_date,
+                "year": anno,
+                "category": categoria,
+                "importance": importanza,
+                "competition": competition,
+                "opponent": opponent,
+                "title": titolo,
+                "description": descrizione,
+                "canonical_id": canonical_id,
+                "source_urls": source_urls,
+            }
+        )
+
+    validi.sort(key=lambda voce: (voce["year"], -voce["importance"]))
+    return validi[:MASSIMO_EVENTI]
+
+
+def _normalizza(testo):
+    testo = unicodedata.normalize("NFKD", str(testo))
+    testo = "".join(carattere for carattere in testo if not unicodedata.combining(carattere))
+    return re.sub(r"[^a-z0-9]+", " ", testo.lower()).strip()
+
+
+def _token_identita(evento):
+    testo = " ".join(
+        str(evento.get(campo, ""))
+        for campo in ("canonical_id", "competition", "opponent", "title")
+    )
+    return {
+        token
+        for token in _normalizza(testo).split()
+        if len(token) > 1 and token not in STOPWORD_IDENTITA
+    }
+
+
+def eventi_equivalenti(primo, secondo):
+    """Riconosce lo stesso fatto anche se titolo o giorno attribuito cambiano."""
+    try:
+        if int(primo.get("year")) != int(secondo.get("year")):
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    id_primo = _normalizza(primo.get("canonical_id", ""))
+    id_secondo = _normalizza(secondo.get("canonical_id", ""))
+    if id_primo and id_primo == id_secondo:
+        return True
+
+    token_primo = _token_identita(primo)
+    token_secondo = _token_identita(secondo)
+    if not token_primo or not token_secondo:
+        return False
+    unione = token_primo | token_secondo
+    jaccard = len(token_primo & token_secondo) / len(unione)
+    similarita = SequenceMatcher(None, id_primo, id_secondo).ratio()
+    return jaccard >= 0.65 or similarita >= 0.82
+
+
+def carica_storico(percorso=PERCORSO_STORICO):
+    if not percorso.exists():
+        return []
+    try:
+        dati = json.loads(percorso.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Storico eventi illeggibile: {percorso}") from exc
+    eventi = dati.get("events", []) if isinstance(dati, dict) else []
+    if not isinstance(eventi, list):
+        raise RuntimeError("Formato dello storico eventi non valido.")
+    return [evento for evento in eventi if isinstance(evento, dict)]
+
+
+def scarta_gia_pubblicati(eventi, storico):
+    nuovi = []
+    for evento in eventi:
+        if any(eventi_equivalenti(evento, vecchio) for vecchio in storico):
+            print(f"Evento gia' pubblicato, scartato: {evento['canonical_id']}")
+            continue
+        if any(eventi_equivalenti(evento, altro) for altro in nuovi):
+            print(f"Candidato duplicato, scartato: {evento['canonical_id']}")
+            continue
+        nuovi.append(evento)
+    return nuovi
+
+
+def salva_nello_storico(eventi, pubblicato_il, percorso=PERCORSO_STORICO):
+    storico = carica_storico(percorso)
+    for evento in eventi:
+        storico.append(
+            {
+                "canonical_id": evento["canonical_id"],
+                "event_date": evento["event_date"],
+                "year": evento["year"],
+                "category": evento["category"],
+                "competition": evento["competition"],
+                "opponent": evento["opponent"],
+                "title": evento["title"],
+                "published_at": pubblicato_il,
+            }
+        )
+    percorso.parent.mkdir(parents=True, exist_ok=True)
+    temporaneo = percorso.with_suffix(".tmp")
+    temporaneo.write_text(
+        json.dumps({"version": 1, "events": storico}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporaneo.replace(percorso)
+
+
+def formatta_rubrica(eventi, data_italiana):
+    blocchi = []
+    for evento in eventi:
+        anno = converti_anno_in_emoji(evento["year"])
+        titolo = html.escape(evento["title"], quote=False)
+        descrizione = html.escape(evento["description"], quote=False)
+        blocchi.append(f"{anno} - <b>{titolo}</b>\n<i>{descrizione}</i>")
+
+    titolo_principale = f"<b>\U0001f440\U0001f519 ACCADDE OGGI | {data_italiana}</b>\n\n"
+    firma_finale = "\n\n\U0001f449 @Juventus_Reborn"
+    return titolo_principale + "\n\n".join(blocchi) + firma_finale
+
+
+def prepara_accadde_oggi(client=None, adesso=None, percorso_storico=PERCORSO_STORICO):
+    adesso = adesso or datetime.now(FUSO_ORARIO)
+    if adesso.tzinfo is None:
+        adesso = adesso.replace(tzinfo=FUSO_ORARIO)
+    mesi_ita = {
+        1: "GENNAIO",
+        2: "FEBBRAIO",
+        3: "MARZO",
+        4: "APRILE",
+        5: "MAGGIO",
+        6: "GIUGNO",
+        7: "LUGLIO",
+        8: "AGOSTO",
+        9: "SETTEMBRE",
+        10: "OTTOBRE",
+        11: "NOVEMBRE",
+        12: "DICEMBRE",
+    }
+    giorno_mese = adesso.strftime("%m-%d")
+    data_italiana = f"{adesso.day} {mesi_ita[adesso.month]}"
+    client = client or Client()
+
+    print(f"Ricerca molto selettiva degli eventi per il {data_italiana}...")
+    candidati = scopri_candidati(client, giorno_mese, data_italiana)
+    print(f"Candidati trovati: {len(candidati)}. Avvio il fact-check indipendente...")
+    verificati = verifica_candidati(client, candidati, giorno_mese, data_italiana)
+    validi = valida_eventi(verificati, giorno_mese)
+    print(f"Eventi che superano data, fonti e soglia 9/10: {len(validi)}")
+
+    storico = carica_storico(percorso_storico)
+    nuovi = scarta_gia_pubblicati(validi, storico)
+    if not nuovi:
         return None
 
-    # Prima converti il Markdown in HTML (prima degli anni, per non confondere le regex)
-    testo_gemini = converti_markdown_in_html(testo_gemini)
+    return Rubrica(
+        testo=formatta_rubrica(nuovi, data_italiana),
+        eventi=nuovi,
+    )
 
-    testo_formattato = converti_anno_in_emoji(testo_gemini)
-
-    titolo_principale = f"<b>👀🔙 ACCADDE OGGI | {data_italiana}</b>\n\n"
-    firma_finale = "\n\n👉 @Juventus_Reborn"
-
-    return f"{titolo_principale}{testo_formattato}{firma_finale}"
 
 def invia_a_telegram(testo):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-
-    payload = {
-        'chat_id': chat_id,
-        'text': testo,
-        'parse_mode': 'HTML'
-    }
-
-    data = urllib.parse.urlencode(payload).encode('utf-8')
+    payload = {"chat_id": chat_id, "text": testo, "parse_mode": "HTML"}
+    data = urllib.parse.urlencode(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data)
-
-    with urllib.request.urlopen(req) as response:
+    with urllib.request.urlopen(req, timeout=30) as response:
         return response.read()
 
+
+def main():
+    variabili = ("GEMINI_API_KEY", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID")
+    mancanti = [nome for nome in variabili if not os.environ.get(nome)]
+    if mancanti:
+        raise RuntimeError(f"Mancano variabili d'ambiente: {', '.join(mancanti)}")
+
+    attendi_orario_preciso(ORA_INVIO[0], ORA_INVIO[1], FUSO_ORARIO)
+    rubrica = prepara_accadde_oggi()
+    if rubrica is None:
+        print("Nessun evento davvero importante e nuovo: nessun invio.")
+        return
+
+    print("Invio a Telegram...")
+    invia_a_telegram(rubrica.testo)
+    salva_nello_storico(
+        rubrica.eventi,
+        datetime.now(FUSO_ORARIO).isoformat(timespec="seconds"),
+    )
+    print("Inviato con successo e registrato nello storico!")
+
+
 if __name__ == "__main__":
-    if not all([os.environ.get("GEMINI_API_KEY"), os.environ.get("TELEGRAM_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")]):
-        print("Errore: Mancano variabili d'ambiente.")
-        exit(1)
-
     try:
-        attendi_orario_preciso(ORA_INVIO[0], ORA_INVIO[1], FUSO_ORARIO)
-
-        print("Generazione testo personalizzato (HTML)...")
-        rubrica = ottieni_accade_oggi()
-
-        if rubrica is None:
-            print("Nessun evento importante trovato per oggi. L'invio a Telegram è stato annullato.")
-        else:
-            print("Invio a Telegram...")
-            invia_a_telegram(rubrica)
-            print("Inviato con successo!")
-
-    except Exception as e:
-        print(f"Errore: {e}")
+        main()
+    except Exception as exc:
+        print(f"Errore: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc

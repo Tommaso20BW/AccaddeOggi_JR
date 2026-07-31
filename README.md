@@ -1,28 +1,35 @@
 # 👀🔙 AccaddeOggi JR
 
-Bot Telegram che prepara la rubrica quotidiana **“Accadde Oggi”** dedicata alla prima squadra maschile della Juventus.
+Bot Telegram per la rubrica quotidiana **“Accadde Oggi”** dedicata alla prima squadra maschile della Juventus.
 
-Il bot usa Google Gemini con Google Search grounding per cercare e verificare gli eventi avvenuti nella data corrente, seleziona fino a tre risultati positivi e li pubblica su Telegram in formato HTML.
+## Criterio editoriale
 
-## Cosa fa davvero
+Il bot pubblica soltanto eventi di rilievo storico eccezionale:
 
-1. Se il processo parte nei 15 minuti precedenti le **07:30 (Europe/Rome)**, attende l’orario esatto; se parte prima, dopo o con un ritardo maggiore procede subito.
-2. Chiede a `gemini-2.5-flash` eventi Juventus avvenuti nello stesso giorno e verificati tramite ricerca Google.
-3. Esclude compleanni, sconfitte, eliminazioni, Juventus Women, Next Gen, Primavera e settore giovanile.
-4. Mantiene al massimo tre eventi, ordinati dal più vecchio al più recente.
-5. Converte gli anni a quattro cifre in emoji numeriche e prepara il messaggio HTML.
-6. Se Gemini restituisce `VUOTO`, termina senza pubblicare.
-7. Altrimenti invia il messaggio tramite Telegram Bot API.
+- conquista di un trofeo ufficiale o certezza matematica di uno Scudetto;
+- partita universalmente riconosciuta come iconica, non un normale big match;
+- record positivo di squadra di importanza nazionale o europea.
 
-Per gli errori `503`/`UNAVAILABLE` di Gemini sono previsti fino a cinque tentativi con attesa esponenziale.
+Sono esclusi vittorie ordinarie, amichevoli, compleanni, ricorrenze, mercato, esordi, gol e record individuali, oltre a sconfitte, eliminazioni, Women, Next Gen, Primavera e giovanili. Trofei e Scudetti richiedono almeno **9/10**; partite iconiche e record di squadra devono ottenere **10/10**. Se nessun fatto supera la soglia della propria categoria, il bot non pubblica.
+
+## Controlli contro errori e duplicati
+
+La generazione avviene in due passaggi separati:
+
+1. Gemini cerca un massimo di cinque candidati tramite Google Search.
+2. Un secondo controllo riparte dalle fonti, verifica giorno, mese e anno esatti, richiede almeno due domini indipendenti e conserva al massimo due eventi.
+
+Il codice applica poi controlli deterministici sul JSON ricevuto. Gli eventi inviati vengono registrati in [`data/eventi_pubblicati.json`](data/eventi_pubblicati.json) con un'identità canonica basata su anno, categoria, competizione e avversario. Prima di ogni invio, il nuovo risultato viene confrontato con tutto lo storico anche in forma approssimata: così lo stesso fatto viene scartato anche se Gemini cambia titolo, descrizione o gli attribuisce un altro giorno.
+
+Lo storico viene aggiornato solo dopo che Telegram ha confermato l'invio. Il workflow esegue automaticamente commit e push del file; la sezione `concurrency` impedisce a due esecuzioni contemporanee di sovrascriversi.
 
 ## Esempio di output
 
 ```text
-👀🔙 ACCADDE OGGI | 15 MAGGIO
+👀🔙 ACCADDE OGGI | 22 MAGGIO
 
-1️⃣9️⃣8️⃣4️⃣ - Titolo sintetico
-Descrizione breve dell’evento.
+1️⃣9️⃣9️⃣6️⃣ - Trionfo europeo a Roma
+La Juventus conquista la Champions League.
 
 👉 @Juventus_Reborn
 ```
@@ -33,13 +40,13 @@ Il messaggio reale usa `<b>` e `<i>` con `parse_mode=HTML`.
 
 Il workflow [`.github/workflows/accadde_oggi.yml`](.github/workflows/accadde_oggi.yml):
 
-- è avviabile **solo manualmente** con `workflow_dispatch`;
-- usa Python 3.12;
-- installa l’ultima versione di `google-genai`;
-- imposta `TZ=Europe/Rome`;
-- esegue `python script.py`.
+- si avvia manualmente con `workflow_dispatch`;
+- usa Python 3.14 e le versioni fissate in `requirements.txt`;
+- imposta il fuso `Europe/Rome`;
+- esegue il bot e salva nello storico soltanto gli eventi realmente inviati;
+- elimina i vecchi run completati al termine.
 
-Non è presente uno `schedule` nel repository. Un servizio esterno può avviare il workflow poco prima delle 07:30; l’attesa interna copre soltanto una finestra massima di 15 minuti.
+Non è presente uno `schedule` nel repository. Un servizio esterno può avviare il workflow poco prima delle 07:30; lo script attende l'orario esatto soltanto entro una finestra di 15 minuti.
 
 ## Configurazione
 
@@ -47,41 +54,20 @@ Configura questi secret in **Settings → Secrets and variables → Actions**:
 
 | Secret | Obbligatorio | Uso |
 |---|---:|---|
-| `GEMINI_API_KEY` | sì | Accesso a Google Gemini. |
-| `TELEGRAM_TOKEN` | sì | Token del bot Telegram. |
-| `TELEGRAM_CHAT_ID` | sì | Chat o canale di destinazione. |
+| `GEMINI_API_KEY` | sì | Accesso a Google Gemini |
+| `TELEGRAM_TOKEN` | sì | Token del bot Telegram |
+| `TELEGRAM_CHAT_ID` | sì | Chat o canale di destinazione |
 
-## Avvio
+È possibile cambiare il modello tramite la variabile facoltativa `GEMINI_MODEL`; il valore predefinito è `gemini-2.5-flash`.
 
-### Da GitHub
-
-Apri **Actions → Rubrica Accade Oggi → Run workflow**.
-
-### In locale
-
-Richiede Python 3.10+ (consigliato 3.12):
+## Avvio locale
 
 ```bash
-python -m pip install --upgrade google-genai
+python -m pip install -r requirements.txt
 python script.py
 ```
 
-Prima dell’avvio esporta le tre variabili d’ambiente elencate sopra. Il repository non contiene un `requirements.txt`: il workflow installa direttamente `google-genai`.
-
-## Struttura
-
-```text
-AccaddeOggi_JR/
-├── script.py
-└── .github/workflows/
-    └── accadde_oggi.yml
-```
-
-## Note operative
-
-- La qualità e la completezza degli eventi dipendono da Gemini e dai risultati disponibili tramite Google Search.
-- Il codice richiede eventi verificati, ma non pubblica le fonti nel messaggio Telegram.
-- Nel blocco finale gli errori vengono stampati nei log; attualmente non viene forzato un codice di uscita diverso da zero per ogni errore di esecuzione.
+Sono richiesti Python 3.10+ e le tre variabili d'ambiente indicate sopra.
 
 ---
 
