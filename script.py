@@ -21,7 +21,11 @@ from google.genai import types
 
 ORA_INVIO = (7, 30)
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
-MODELLO_GEMINI = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODELLI_GEMINI_PREDEFINITI = (
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
 MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 9
 PERCORSO_STORICO = Path(
@@ -72,6 +76,22 @@ STOPWORD_IDENTITA = {
 class Rubrica:
     testo: str
     eventi: list[dict]
+
+
+def modelli_gemini_configurati():
+    """Restituisce la catena ordinata di modelli, senza duplicati."""
+    elenco = os.environ.get("GEMINI_MODELS")
+    if elenco is not None:
+        modelli = [modello.strip() for modello in elenco.split(",") if modello.strip()]
+        if not modelli:
+            raise RuntimeError("GEMINI_MODELS non contiene alcun modello valido.")
+    else:
+        modello_legacy = os.environ.get("GEMINI_MODEL", "").strip()
+        modelli = ([modello_legacy] if modello_legacy else []) + list(
+            MODELLI_GEMINI_PREDEFINITI
+        )
+
+    return tuple(dict.fromkeys(modelli))
 
 
 def attendi_orario_preciso(ora, minuto, fuso, margine_massimo_minuti=15):
@@ -139,6 +159,60 @@ def chiama_gemini_con_retry(client, model, prompt, config, max_retries=5):
     raise RuntimeError("Gemini non disponibile.")
 
 
+def _errore_ammette_fallback(exc):
+    errore = str(exc).lower()
+    indicatori = (
+        "404",
+        "410",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "deprecated",
+        "model_not_found",
+        "no longer available",
+        "not found",
+        "not supported",
+        "resource_exhausted",
+        "shut down",
+        "unavailable",
+    )
+    return any(indicatore in errore for indicatore in indicatori)
+
+
+def chiama_gemini_con_fallback(
+    client, models, prompt, config, max_retries=5
+):
+    """Prova in ordine piu' modelli dopo retry e indisponibilita' compatibili."""
+    modelli = tuple(models)
+    if not modelli:
+        raise RuntimeError("Nessun modello Gemini configurato.")
+
+    for indice, modello in enumerate(modelli):
+        try:
+            risposta = chiama_gemini_con_retry(
+                client,
+                modello,
+                prompt,
+                config,
+                max_retries=max_retries,
+            )
+            print(f"Risposta ottenuta con il modello Gemini: {modello}")
+            return risposta
+        except Exception as exc:
+            ultimo_modello = indice == len(modelli) - 1
+            if ultimo_modello or not _errore_ammette_fallback(exc):
+                raise
+            successivo = modelli[indice + 1]
+            print(
+                f"Modello Gemini non disponibile: {modello}. "
+                f"Passo al fallback: {successivo}."
+            )
+
+    raise RuntimeError("Tutti i modelli Gemini configurati non sono disponibili.")
+
+
 def estrai_json(testo):
     """Estrae un oggetto JSON anche se il modello aggiunge un code fence."""
     testo = testo.strip()
@@ -158,11 +232,10 @@ def _config_con_ricerca(system_instruction):
     return types.GenerateContentConfig(
         system_instruction=system_instruction,
         tools=[types.Tool(google_search=types.GoogleSearch())],
-        temperature=0.1,
     )
 
 
-def scopri_candidati(client, giorno_mese, data_italiana):
+def scopri_candidati(client, giorno_mese, data_italiana, models=None):
     """Prima passata: trova soltanto possibili eventi di eccezionale rilievo."""
     istruzioni = """
 Sei un ricercatore di storia della Juventus. Devi proporre candidati, non scrivere
@@ -203,9 +276,9 @@ TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA e RECORD_POSITIVO.
         "event_date deve contenere l'anno reale dell'evento. Non includere eventi "
         "solo vagamente interessanti e non cambiare giorno per farli rientrare."
     )
-    risposta = chiama_gemini_con_retry(
+    risposta = chiama_gemini_con_fallback(
         client,
-        MODELLO_GEMINI,
+        models or modelli_gemini_configurati(),
         prompt,
         _config_con_ricerca(istruzioni),
     )
@@ -214,7 +287,7 @@ TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA e RECORD_POSITIVO.
     return eventi if isinstance(eventi, list) else []
 
 
-def verifica_candidati(client, candidati, giorno_mese, data_italiana):
+def verifica_candidati(client, candidati, giorno_mese, data_italiana, models=None):
     """Seconda passata: un revisore indipendente verifica data, fonti e rilievo."""
     if not candidati:
         return []
@@ -265,9 +338,9 @@ mai la soglia di importanza per arrivare a tre: anche zero, uno o due sono corre
         "in event_date l'anno reale del fatto:\n"
         f"{json.dumps(candidati, ensure_ascii=False)}"
     )
-    risposta = chiama_gemini_con_retry(
+    risposta = chiama_gemini_con_fallback(
         client,
-        MODELLO_GEMINI,
+        models or modelli_gemini_configurati(),
         prompt,
         _config_con_ricerca(istruzioni),
     )
@@ -483,11 +556,15 @@ def prepara_accadde_oggi(client=None, adesso=None, percorso_storico=PERCORSO_STO
     giorno_mese = adesso.strftime("%m-%d")
     data_italiana = f"{adesso.day} {mesi_ita[adesso.month]}"
     client = client or Client()
+    modelli = modelli_gemini_configurati()
 
+    print(f"Catena modelli Gemini: {' -> '.join(modelli)}")
     print(f"Ricerca molto selettiva degli eventi per il {data_italiana}...")
-    candidati = scopri_candidati(client, giorno_mese, data_italiana)
+    candidati = scopri_candidati(client, giorno_mese, data_italiana, modelli)
     print(f"Candidati trovati: {len(candidati)}. Avvio il fact-check indipendente...")
-    verificati = verifica_candidati(client, candidati, giorno_mese, data_italiana)
+    verificati = verifica_candidati(
+        client, candidati, giorno_mese, data_italiana, modelli
+    )
     validi = valida_eventi(verificati, giorno_mese)
     print(f"Eventi che superano data, fonti e soglia 9/10: {len(validi)}")
 

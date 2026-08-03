@@ -60,7 +60,14 @@ Configura questi secret in **Settings → Secrets and variables → Actions**:
 | `TELEGRAM_TOKEN` | sì | Token del bot Telegram |
 | `TELEGRAM_CHAT_ID` | sì | Chat o canale di destinazione |
 
-È possibile cambiare il modello tramite la variabile facoltativa `GEMINI_MODEL`; il valore predefinito è `gemini-2.5-flash`.
+Il bot usa una catena di modelli stabili: `gemini-3.6-flash`, poi
+`gemini-3.5-flash` e infine `gemini-3.5-flash-lite`. Ogni modello viene ritentato
+in caso di errore temporaneo; se resta indisponibile, il bot passa automaticamente
+al successivo.
+
+La variabile facoltativa `GEMINI_MODELS` può sostituire l'intera catena con un
+elenco separato da virgole. La precedente `GEMINI_MODEL` resta compatibile: il
+modello indicato diventa il primo della catena, seguito dai fallback predefiniti.
 
 ## Avvio locale
 

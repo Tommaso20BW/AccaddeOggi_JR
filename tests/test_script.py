@@ -2,6 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import script
 
@@ -81,6 +83,75 @@ class TestRisposteGemini(unittest.TestCase):
 
         self.assertEqual(len(risultato), 3)
         self.assertEqual([evento["year"] for evento in risultato], [1996, 2000, 2005])
+
+
+class TestFallbackGemini(unittest.TestCase):
+    def test_catena_predefinita_usa_tre_modelli_stabili(self):
+        with patch.dict(
+            "os.environ", {"GEMINI_MODEL": "", "GEMINI_MODELS": ""}, clear=False
+        ):
+            del script.os.environ["GEMINI_MODELS"]
+            self.assertEqual(
+                script.modelli_gemini_configurati(),
+                (
+                    "gemini-3.6-flash",
+                    "gemini-3.5-flash",
+                    "gemini-3.5-flash-lite",
+                ),
+            )
+
+    def test_variabile_legacy_aggiunge_i_fallback_predefiniti(self):
+        with patch.dict(
+            "os.environ",
+            {"GEMINI_MODEL": "modello-personalizzato"},
+            clear=True,
+        ):
+            self.assertEqual(
+                script.modelli_gemini_configurati()[0], "modello-personalizzato"
+            )
+            self.assertEqual(len(script.modelli_gemini_configurati()), 4)
+
+    def test_errore_del_modello_attiva_il_fallback(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if model == "primario":
+                    raise RuntimeError("404 NOT_FOUND: model not found")
+                return SimpleNamespace(text='{"events": []}')
+
+        client = SimpleNamespace(models=Models())
+        risposta = script.chiama_gemini_con_fallback(
+            client,
+            ("primario", "fallback-1", "fallback-2"),
+            "prompt",
+            None,
+            max_retries=1,
+        )
+
+        self.assertEqual(risposta.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primario", "fallback-1"])
+
+    def test_errore_di_autenticazione_non_viene_nascosto(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                raise RuntimeError("401 UNAUTHENTICATED")
+
+        client = SimpleNamespace(models=Models())
+        with self.assertRaisesRegex(RuntimeError, "401"):
+            script.chiama_gemini_con_fallback(
+                client,
+                ("primario", "fallback"),
+                "prompt",
+                None,
+                max_retries=1,
+            )
+
+        self.assertEqual(chiamate, ["primario"])
 
 
 class TestDuplicati(unittest.TestCase):
