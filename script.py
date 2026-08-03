@@ -26,6 +26,7 @@ MODELLI_GEMINI_PREDEFINITI = (
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
+ATTESE_NUOVI_CICLI_GEMINI = (60, 180, 600)
 MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 9
 PERCORSO_STORICO = Path(
@@ -182,34 +183,63 @@ def _errore_ammette_fallback(exc):
 
 
 def chiama_gemini_con_fallback(
-    client, models, prompt, config, max_retries=5
+    client,
+    models,
+    prompt,
+    config,
+    max_retries=2,
+    round_delays=ATTESE_NUOVI_CICLI_GEMINI,
 ):
-    """Prova in ordine piu' modelli dopo retry e indisponibilita' compatibili."""
+    """Prova piu' modelli e ripete l'intera catena dopo attese progressive."""
     modelli = tuple(models)
     if not modelli:
         raise RuntimeError("Nessun modello Gemini configurato.")
+    if max_retries < 1:
+        raise ValueError("max_retries deve essere almeno 1.")
 
-    for indice, modello in enumerate(modelli):
-        try:
-            risposta = chiama_gemini_con_retry(
-                client,
-                modello,
-                prompt,
-                config,
-                max_retries=max_retries,
-            )
-            print(f"Risposta ottenuta con il modello Gemini: {modello}")
-            return risposta
-        except Exception as exc:
-            ultimo_modello = indice == len(modelli) - 1
-            if ultimo_modello or not _errore_ammette_fallback(exc):
-                raise
-            successivo = modelli[indice + 1]
+    attese_cicli = tuple(round_delays)
+    if any(attesa < 0 for attesa in attese_cicli):
+        raise ValueError("Le attese tra i cicli Gemini non possono essere negative.")
+
+    numero_cicli = len(attese_cicli) + 1
+    ultimo_errore = None
+
+    for ciclo in range(numero_cicli):
+        print(f"Ciclo Gemini {ciclo + 1}/{numero_cicli}.")
+        for indice, modello in enumerate(modelli):
+            try:
+                risposta = chiama_gemini_con_retry(
+                    client,
+                    modello,
+                    prompt,
+                    config,
+                    max_retries=max_retries,
+                )
+                print(f"Risposta ottenuta con il modello Gemini: {modello}")
+                return risposta
+            except Exception as exc:
+                ultimo_errore = exc
+                if not _errore_ammette_fallback(exc):
+                    raise
+                if indice < len(modelli) - 1:
+                    successivo = modelli[indice + 1]
+                    print(
+                        f"Modello Gemini non disponibile: {modello}. "
+                        f"Passo al fallback: {successivo}."
+                    )
+
+        if ciclo < len(attese_cicli):
+            attesa_base = attese_cicli[ciclo]
+            jitter = random.uniform(0, min(10, attesa_base * 0.1))
+            attesa = attesa_base + jitter
             print(
-                f"Modello Gemini non disponibile: {modello}. "
-                f"Passo al fallback: {successivo}."
+                "Tutti i modelli Gemini sono temporaneamente indisponibili. "
+                f"Attendo {attesa:.0f}s, poi riprovo l'intera catena."
             )
+            time.sleep(attesa)
 
+    if ultimo_errore is not None:
+        raise ultimo_errore
     raise RuntimeError("Tutti i modelli Gemini configurati non sono disponibili.")
 
 

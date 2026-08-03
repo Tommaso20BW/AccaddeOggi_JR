@@ -63,7 +63,10 @@ Configura questi secret in **Settings → Secrets and variables → Actions**:
 Il bot usa una catena di modelli stabili: `gemini-3.6-flash`, poi
 `gemini-3.5-flash` e infine `gemini-3.5-flash-lite`. Ogni modello viene ritentato
 in caso di errore temporaneo; se resta indisponibile, il bot passa automaticamente
-al successivo.
+al successivo. Se tutti e tre restituiscono errori temporanei, il bot non termina
+subito: attende circa 1, 3 e 10 minuti e riprova ogni volta l'intera catena. In
+totale esegue fino a quattro cicli completi, con un piccolo jitter per evitare di
+riprovare durante lo stesso picco di traffico.
 
 La variabile facoltativa `GEMINI_MODELS` può sostituire l'intera catena con un
 elenco separato da virgole. La precedente `GEMINI_MODEL` resta compatibile: il

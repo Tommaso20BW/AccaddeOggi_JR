@@ -153,6 +153,33 @@ class TestFallbackGemini(unittest.TestCase):
 
         self.assertEqual(chiamate, ["primario"])
 
+    def test_dopo_un_picco_riprova_l_intera_catena(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if len(chiamate) <= 2:
+                    raise RuntimeError("503 UNAVAILABLE: high demand")
+                return SimpleNamespace(text='{"events": []}')
+
+        client = SimpleNamespace(models=Models())
+        with patch("script.random.uniform", return_value=0), patch(
+            "script.time.sleep"
+        ) as sleep:
+            risposta = script.chiama_gemini_con_fallback(
+                client,
+                ("primario", "fallback"),
+                "prompt",
+                None,
+                max_retries=1,
+                round_delays=(60,),
+            )
+
+        self.assertEqual(risposta.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primario", "fallback", "primario"])
+        sleep.assert_called_once_with(60)
+
 
 class TestDuplicati(unittest.TestCase):
     def test_stesso_evento_con_testo_e_giorno_diversi_viene_riconosciuto(self):
