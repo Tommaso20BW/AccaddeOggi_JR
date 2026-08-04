@@ -207,7 +207,25 @@ class TestDuplicati(unittest.TestCase):
         )
 
         self.assertTrue(script.eventi_equivalenti(pubblicato, nuovo))
-        self.assertEqual(script.scarta_gia_pubblicati([nuovo], [pubblicato]), [])
+        pubblicato["published_at"] = "2026-03-12T07:30:00+01:00"
+
+        self.assertEqual(
+            script.scarta_gia_pubblicati(
+                [nuovo],
+                [pubblicato],
+                anno_pubblicazione=2026,
+            ),
+            [],
+        )
+
+        self.assertEqual(
+            script.scarta_gia_pubblicati(
+                [nuovo],
+                [pubblicato],
+                anno_pubblicazione=2027,
+            ),
+            [nuovo],
+        )
 
     def test_eventi_di_anni_diversi_non_collidono(self):
         primo = evento_valido()
