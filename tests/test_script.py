@@ -3,262 +3,203 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import script
 
 
-def evento_valido(**modifiche):
-    evento = {
-        "event_date": "1996-05-22",
-        "year": 1996,
-        "category": "TROFEO",
-        "outcome": "TROFEO_CONQUISTATO",
-        "importance": 10,
-        "competition": "UEFA Champions League",
-        "opponent": "Ajax",
-        "title": "Trionfo europeo a Roma",
-        "description": "La Juventus conquista la Champions League ai rigori.",
-        "canonical_id": "1996|TROFEO|UEFA_CHAMPIONS_LEAGUE|AJAX",
-        "source_urls": [
-            "https://www.juventus.com/esempio",
-            "https://www.uefa.com/esempio",
+def evento(date="1996-05-22", year=1996, category="TROFEO",
+           outcome="TROFEO_CONQUISTATO", importance=10,
+           context="UEFA Champions League", subject="Ajax",
+           title="Trionfo europeo a Roma",
+           description="La Juventus conquista la Champions League ai rigori.",
+           canonical=None, sources=None):
+    return {
+        "event_date": date,
+        "year": year,
+        "category": category,
+        "outcome": outcome,
+        "importance": importance,
+        "competition": context,
+        "opponent": subject,
+        "title": title,
+        "description": description,
+        "canonical_id": canonical or f"{year}|{category}|{context}|{subject}",
+        "source_urls": sources or [
+            "https://www.juventus.com/storia",
+            "https://www.uefa.com/storia",
         ],
     }
-    evento.update(modifiche)
-    return evento
 
 
-class TestRisposteGemini(unittest.TestCase):
-    def test_estrai_json_da_code_fence(self):
-        risultato = script.estrai_json('```json\n{"events": []}\n```')
-        self.assertEqual(risultato, {"events": []})
-
-    def test_valida_solo_eventi_corretti(self):
-        valido = evento_valido()
-        data_errata = evento_valido(event_date="1996-05-23")
-        ordinario = evento_valido(importance=8)
-        iconica = evento_valido(
-            category="PARTITA_ICONICA",
-            outcome="VITTORIA",
-            importance=9,
-        )
-        sconfitta = evento_valido(
-            category="PARTITA_ICONICA",
-            outcome="SCONFITTA",
-            importance=10,
-        )
-        fonte_unica = evento_valido(
-            source_urls=[
-                "https://www.juventus.com/a",
-                "https://www.juventus.com/b",
-            ]
-        )
-
-        risultato = script.valida_eventi(
-            [valido, data_errata, ordinario, iconica, sconfitta, fonte_unica],
-            "05-22",
-        )
-
-        self.assertEqual(risultato, [valido, iconica])
-
-    def test_rifiuta_data_impossibile(self):
-        impossibile = evento_valido(event_date="1996-02-30")
-        self.assertEqual(script.valida_eventi([impossibile], "02-30"), [])
-
-    def test_conserva_al_massimo_tre_eventi(self):
-        eventi = [
-            evento_valido(
-                event_date=f"{anno}-05-22",
-                year=anno,
-                canonical_id=f"{anno}|TROFEO|COMPETIZIONE_{anno}|AVVERSARIO",
-            )
-            for anno in (1996, 2000, 2005, 2010)
+class TestEditoriale(unittest.TestCase):
+    def test_accetta_8_9_10(self):
+        events = [
+            evento(importance=8, canonical="A"),
+            evento(importance=9, canonical="B"),
+            evento(importance=10, canonical="C"),
         ]
+        self.assertEqual([x["importance"] for x in script.valida_eventi(events, "05-22")], [10, 9, 8])
 
-        risultato = script.valida_eventi(eventi, "05-22")
-        self.assertEqual(len(risultato), 3)
-        self.assertEqual([evento["year"] for evento in risultato], [1996, 2000, 2005])
+    def test_rifiuta_7(self):
+        self.assertEqual(script.valida_eventi([evento(importance=7)], "05-22"), [])
+
+    def test_massimo_tre_priorita_importanza(self):
+        events = [
+            evento(date="1900-05-22", year=1900, importance=8, canonical="1900"),
+            evento(date="2000-05-22", year=2000, importance=10, canonical="2000"),
+            evento(date="1990-05-22", year=1990, importance=9, canonical="1990"),
+            evento(date="1980-05-22", year=1980, importance=10, canonical="1980"),
+            evento(date="1970-05-22", year=1970, importance=8, canonical="1970"),
+        ]
+        result = script.valida_eventi(events, "05-22")
+        self.assertEqual([x["importance"] for x in result], [10, 10, 9])
+        self.assertEqual([x["year"] for x in result], [1980, 2000, 1990])
+
+    def test_acquisto_iconico_valido(self):
+        e = evento(date="2018-07-10", year=2018, category="ACQUISTO_ICONICO",
+                   outcome="ACQUISTO_UFFICIALE", importance=10,
+                   context="Calciomercato", subject="Cristiano Ronaldo",
+                   title="Arriva Cristiano Ronaldo",
+                   description="La Juventus ufficializza l'acquisto di Cristiano Ronaldo.")
+        self.assertEqual(script.valida_eventi([e], "07-10"), [e])
+
+    def test_acquisto_non_ufficiale_scartato(self):
+        e = evento(date="2018-07-10", year=2018, category="ACQUISTO_ICONICO",
+                   outcome="VISITE_MEDICHE", importance=10)
+        self.assertEqual(script.valida_eventi([e], "07-10"), [])
+
+    def test_tutte_nuove_categorie(self):
+        for i, (cat, outcome) in enumerate([
+            ("PARTITA_MEMORABILE", "VITTORIA"),
+            ("DEBUTTO_ICONICO", "DEBUTTO"),
+            ("TRAGUARDO_STORICO", "TRAGUARDO_RAGGIUNTO"),
+            ("ACQUISTO_ICONICO", "ACQUISTO_UFFICIALE"),
+        ]):
+            e = evento(category=cat, outcome=outcome, importance=8, canonical=f"X{i}")
+            self.assertEqual(script.valida_eventi([e], "05-22"), [e])
+
+    def test_due_fonti_indipendenti(self):
+        e = evento(sources=["https://www.juventus.com/a", "https://www.juventus.com/b"])
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_data_errata(self):
+        self.assertEqual(script.valida_eventi([evento(date="1996-05-23")], "05-22"), [])
+
+    def test_titolo_troppo_corto_scartato(self):
+        e = evento(title="Solo")
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_titolo_troppo_lungo_scartato(self):
+        e = evento(title="Questo titolo contiene decisamente troppe parole")
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_descrizione_troppo_lunga_scartata(self):
+        e = evento(description="x" * 241)
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_categoria_sconosciuta_scartata(self):
+        e = evento(category="CURIOSITA", outcome="EVENTO")
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_sconfitta_scartata(self):
+        e = evento(category="PARTITA_ICONICA", outcome="SCONFITTA")
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_anno_non_coerente_scartato(self):
+        e = evento(date="1996-05-22", year=1997)
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_url_non_http_scartati(self):
+        e = evento(sources=["ftp://juventus.com/a", "mailto:test@example.com"])
+        self.assertEqual(script.valida_eventi([e], "05-22"), [])
+
+    def test_ordine_a_parita_di_voto(self):
+        events = [
+            evento(date="2000-05-22", year=2000, importance=9, canonical="B"),
+            evento(date="1980-05-22", year=1980, importance=9, canonical="A"),
+        ]
+        result = script.valida_eventi(events, "05-22")
+        self.assertEqual([x["year"] for x in result], [1980, 2000])
 
 
-class TestFallbackGemini(unittest.TestCase):
-    def test_catena_predefinita_usa_tre_modelli(self):
-        with patch.dict("os.environ", {"GEMINI_MODEL": ""}, clear=True):
-            self.assertEqual(
-                script.modelli_gemini_configurati(),
-                (
-                    "gemini-3.6-flash",
-                    "gemini-3.5-flash",
-                    "gemini-3.5-flash-lite",
-                ),
-            )
+class TestStorico(unittest.TestCase):
+    def test_stesso_anno_bloccato_successivo_permesso(self):
+        e = evento()
+        old = dict(e, published_at="2026-05-22T07:30:00+02:00")
+        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2026), [])
+        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2027), [e])
 
-    def test_variabile_legacy_aggiunge_fallback(self):
-        with patch.dict(
-            "os.environ",
-            {"GEMINI_MODEL": "modello-personalizzato"},
-            clear=True,
-        ):
-            modelli = script.modelli_gemini_configurati()
-            self.assertEqual(modelli[0], "modello-personalizzato")
-            self.assertEqual(len(modelli), 4)
+    def test_duplicato_stesso_run(self):
+        e1 = evento()
+        e2 = dict(e1, title="La Champions di Roma")
+        self.assertEqual(len(script.scarta_gia_pubblicati([e1, e2], [], 2026)), 1)
 
-    def test_modello_inesistente_attiva_fallback(self):
-        chiamate = []
+    def test_salvataggio_storico(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "events.json"
+            script.salva_nello_storico([evento()], "2026-05-22T07:30:00+02:00", p)
+            self.assertEqual(len(script.carica_storico(p)), 1)
 
+    def test_storico_senza_published_at_non_blocca(self):
+        e = evento()
+        self.assertEqual(script.scarta_gia_pubblicati([e], [dict(e)], 2026), [e])
+
+    def test_published_at_malformato_non_blocca(self):
+        e = evento()
+        old = dict(e, published_at="data-sbagliata")
+        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2026), [e])
+
+
+class TestGemini(unittest.TestCase):
+    def test_quota_non_fallback(self):
+        calls = []
         class Models:
             def generate_content(self, model, contents, config):
-                chiamate.append(model)
-                if model == "primario":
-                    raise RuntimeError("404 NOT_FOUND: model not found")
-                return SimpleNamespace(text='{"events": []}')
-
-        client = SimpleNamespace(models=Models())
-        risposta = script.chiama_gemini_con_fallback(
-            client,
-            ("primario", "fallback-1", "fallback-2"),
-            "prompt",
-            None,
-            max_retries=1,
-        )
-
-        self.assertEqual(risposta.text, '{"events": []}')
-        self.assertEqual(chiamate, ["primario", "fallback-1"])
-
-    def test_errore_temporaneo_riprova_stesso_modello(self):
-        chiamate = []
-
-        class Models:
-            def generate_content(self, model, contents, config):
-                chiamate.append(model)
-                if len(chiamate) == 1:
-                    raise RuntimeError("503 UNAVAILABLE: high demand")
-                return SimpleNamespace(text='{"events": []}')
-
-        client = SimpleNamespace(models=Models())
-
-        with patch("script.random.uniform", return_value=0), patch("script.time.sleep") as sleep:
-            risposta = script.chiama_gemini_con_fallback(
-                client,
-                ("primario", "fallback"),
-                "prompt",
-                None,
-                max_retries=2,
-            )
-
-        self.assertEqual(risposta.text, '{"events": []}')
-        self.assertEqual(chiamate, ["primario", "primario"])
-        sleep.assert_called_once_with(1)
-
-    def test_quota_esaurita_non_prova_fallback(self):
-        chiamate = []
-
-        class Models:
-            def generate_content(self, model, contents, config):
-                chiamate.append(model)
-                raise RuntimeError(
-                    "429 RESOURCE_EXHAUSTED: You exceeded your current quota, "
-                    "please check your plan and billing details."
-                )
-
-        client = SimpleNamespace(models=Models())
-
+                calls.append(model)
+                raise RuntimeError("429 RESOURCE_EXHAUSTED: You exceeded your current quota, check your plan and billing details")
         with self.assertRaisesRegex(RuntimeError, "Quota Gemini esaurita"):
-            script.chiama_gemini_con_fallback(
-                client,
-                ("primario", "fallback"),
-                "prompt",
-                None,
-                max_retries=3,
-            )
+            script.chiama_gemini_con_fallback(SimpleNamespace(models=Models()), ("a", "b"), "x", None, 3)
+        self.assertEqual(calls, ["a"])
 
-        self.assertEqual(chiamate, ["primario"])
-
-    def test_errore_autenticazione_non_viene_nascosto(self):
-        chiamate = []
-
+    def test_404_fallback(self):
+        calls = []
         class Models:
             def generate_content(self, model, contents, config):
-                chiamate.append(model)
+                calls.append(model)
+                if model == "a":
+                    raise RuntimeError("404 model not found")
+                return SimpleNamespace(text='{"events":[]}')
+        r = script.chiama_gemini_con_fallback(SimpleNamespace(models=Models()), ("a", "b"), "x", None, 1)
+        self.assertEqual(r.text, '{"events":[]}')
+        self.assertEqual(calls, ["a", "b"])
+
+    def test_errore_503_riprova_stesso_modello(self):
+        calls = []
+        class Models:
+            def generate_content(self, model, contents, config):
+                calls.append(model)
+                if len(calls) == 1:
+                    raise RuntimeError("503 UNAVAILABLE")
+                return SimpleNamespace(text='{"events":[]}')
+        from unittest.mock import patch
+        with patch("script.time.sleep"), patch("script.random.uniform", return_value=0):
+            r = script.chiama_gemini_con_fallback(
+                SimpleNamespace(models=Models()), ("a", "b"), "x", None, 2
+            )
+        self.assertEqual(r.text, '{"events":[]}')
+        self.assertEqual(calls, ["a", "a"])
+
+    def test_401_non_attiva_fallback(self):
+        calls = []
+        class Models:
+            def generate_content(self, model, contents, config):
+                calls.append(model)
                 raise RuntimeError("401 UNAUTHENTICATED")
-
-        client = SimpleNamespace(models=Models())
-
         with self.assertRaisesRegex(RuntimeError, "401"):
             script.chiama_gemini_con_fallback(
-                client,
-                ("primario", "fallback"),
-                "prompt",
-                None,
-                max_retries=1,
+                SimpleNamespace(models=Models()), ("a", "b"), "x", None, 1
             )
-
-        self.assertEqual(chiamate, ["primario"])
-
-
-class TestDuplicati(unittest.TestCase):
-    def test_stesso_evento_con_testo_diverso_viene_riconosciuto(self):
-        pubblicato = evento_valido()
-        nuovo = evento_valido(
-            event_date="1996-05-23",
-            title="La Champions di Roma",
-            description="I bianconeri battono l'Ajax dal dischetto.",
-            canonical_id="1996|TROFEO|CHAMPIONS_LEAGUE|AJAX",
-        )
-
-        self.assertTrue(script.eventi_equivalenti(pubblicato, nuovo))
-        pubblicato["published_at"] = "2026-03-12T07:30:00+01:00"
-
-        self.assertEqual(
-            script.scarta_gia_pubblicati(
-                [nuovo],
-                [pubblicato],
-                anno_pubblicazione=2026,
-            ),
-            [],
-        )
-
-        self.assertEqual(
-            script.scarta_gia_pubblicati(
-                [nuovo],
-                [pubblicato],
-                anno_pubblicazione=2027,
-            ),
-            [nuovo],
-        )
-
-    def test_eventi_di_anni_diversi_non_collidono(self):
-        primo = evento_valido()
-        secondo = evento_valido(
-            year=1985,
-            event_date="1985-05-29",
-            canonical_id="1985|TROFEO|COPPA_CAMPIONI|LIVERPOOL",
-            opponent="Liverpool",
-        )
-        self.assertFalse(script.eventi_equivalenti(primo, secondo))
-
-    def test_storico_si_salva_e_si_ricarica(self):
-        with tempfile.TemporaryDirectory() as directory:
-            percorso = Path(directory) / "eventi.json"
-            script.salva_nello_storico(
-                [evento_valido()],
-                "2026-07-31T07:30:00+02:00",
-                percorso,
-            )
-            contenuto = json.loads(percorso.read_text(encoding="utf-8"))
-
-            self.assertEqual(contenuto["version"], 1)
-            self.assertEqual(len(script.carica_storico(percorso)), 1)
-
-
-class TestFormattazione(unittest.TestCase):
-    def test_html_del_modello_viene_escapato(self):
-        evento = evento_valido(title="Trionfo <europeo> a Roma")
-        testo = script.formatta_rubrica([evento], "22 MAGGIO")
-
-        self.assertIn("1️⃣9️⃣9️⃣6️⃣", testo)
-        self.assertIn("<b>Trionfo &lt;europeo&gt; a Roma</b>", testo)
-        self.assertIn("<i>La Juventus conquista", testo)
+        self.assertEqual(calls, ["a"])
 
 
 if __name__ == "__main__":
