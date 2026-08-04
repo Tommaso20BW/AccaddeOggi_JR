@@ -28,7 +28,7 @@ MODELLI_GEMINI_PREDEFINITI = (
 )
 
 MASSIMO_EVENTI = 3
-SOGLIA_IMPORTANZA = 9
+SOGLIA_IMPORTANZA = 8
 
 PERCORSO_STORICO = Path(
     os.environ.get(
@@ -487,15 +487,15 @@ Approva un evento soltanto se:
 - le fonti confermano giorno, mese e anno esatti;
 - riguarda la prima squadra maschile della Juventus;
 - non è una sconfitta, eliminazione o evento negativo;
-- raggiunge almeno 9/10.
+- raggiunge almeno 8/10.
 
 Scala:
 10 = conquista di Champions/Coppa dei Campioni oppure una delle imprese o
 dei record di squadra più celebri e indiscutibili della storia del club.
-9 = conquista di un altro trofeo ufficiale, Scudetto matematico, impresa
-universalmente iconica o record storico di squadra nazionale/europeo.
-8 o meno = normale vittoria, big match, turno preliminare, traguardo
-individuale o curiosità. Questi eventi vanno scartati.
+10 = Champions, Coppa dei Campioni, Scudetti e imprese leggendarie.
+9 = grandi trofei e record storici di squadra.
+8 = anniversari storicamente rilevanti come debutti di giocatori iconici, traguardi eccezionali, partite memorabili e record importanti.
+7 o meno = normali vittorie, curiosità, semplici esordi, primi gol o ricorrenze minori. Questi eventi vanno scartati.
 
 Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è il benchmark di una
 PARTITA_ICONICA che raggiunge la soglia.
@@ -568,7 +568,7 @@ def _domini_fonti(urls):
 
 
 def valida_eventi(eventi, giorno_mese):
-    """Applica vincoli deterministici alla risposta di Gemini."""
+    """Applica vincoli deterministici alla risposta di Gemini. Accetta eventi da 8 a 10."""
     validi = []
 
     for evento in eventi:
