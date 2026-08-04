@@ -793,16 +793,56 @@ def carica_storico(percorso=PERCORSO_STORICO):
     ]
 
 
-def scarta_gia_pubblicati(eventi, storico):
+def _anno_pubblicazione(evento):
+    """Ricava l'anno in cui un evento è stato pubblicato."""
+    published_at = str(evento.get("published_at", "")).strip()
+
+    if not published_at:
+        return None
+
+    corrispondenza = re.match(r"^(\\d{4})", published_at)
+
+    if not corrispondenza:
+        return None
+
+    try:
+        return int(corrispondenza.group(1))
+    except ValueError:
+        return None
+
+
+def scarta_gia_pubblicati(
+    eventi,
+    storico,
+    anno_pubblicazione=None,
+):
+    """
+    Scarta un evento solo se è già stato pubblicato nello stesso anno.
+
+    Un secondo run nello stesso anno non crea duplicati.
+    Lo stesso anniversario torna pubblicabile negli anni successivi.
+    """
+    if anno_pubblicazione is None:
+        anno_pubblicazione = datetime.now(
+            FUSO_ORARIO
+        ).year
+
     nuovi = []
+
+    storico_anno_corrente = [
+        evento
+        for evento in storico
+        if _anno_pubblicazione(evento) == anno_pubblicazione
+    ]
 
     for evento in eventi:
         if any(
             eventi_equivalenti(evento, vecchio)
-            for vecchio in storico
+            for vecchio in storico_anno_corrente
         ):
             print(
-                "Evento già pubblicato, scartato: "
+                "Evento già pubblicato nel "
+                f"{anno_pubblicazione}, scartato: "
                 f"{evento['canonical_id']}"
             )
             continue
@@ -812,7 +852,7 @@ def scarta_gia_pubblicati(eventi, storico):
             for altro in nuovi
         ):
             print(
-                "Candidato duplicato, scartato: "
+                "Candidato duplicato nello stesso run, scartato: "
                 f"{evento['canonical_id']}"
             )
             continue
@@ -984,6 +1024,7 @@ def prepara_accadde_oggi(
     nuovi = scarta_gia_pubblicati(
         validi,
         storico,
+        anno_pubblicazione=adesso.year,
     )
 
     if not nuovi:
