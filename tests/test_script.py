@@ -34,15 +34,19 @@ class TestRisposteGemini(unittest.TestCase):
         risultato = script.estrai_json('```json\n{"events": []}\n```')
         self.assertEqual(risultato, {"events": []})
 
-    def test_valida_solo_evento_con_data_importanza_e_due_fonti(self):
+    def test_valida_solo_eventi_corretti(self):
         valido = evento_valido()
         data_errata = evento_valido(event_date="1996-05-23")
         ordinario = evento_valido(importance=8)
-        iconica_da_nove = evento_valido(
-            category="PARTITA_ICONICA", outcome="VITTORIA", importance=9
+        iconica = evento_valido(
+            category="PARTITA_ICONICA",
+            outcome="VITTORIA",
+            importance=9,
         )
-        sconfitta_iconica = evento_valido(
-            category="PARTITA_ICONICA", outcome="SCONFITTA", importance=10
+        sconfitta = evento_valido(
+            category="PARTITA_ICONICA",
+            outcome="SCONFITTA",
+            importance=10,
         )
         fonte_unica = evento_valido(
             source_urls=[
@@ -52,24 +56,17 @@ class TestRisposteGemini(unittest.TestCase):
         )
 
         risultato = script.valida_eventi(
-            [
-                valido,
-                data_errata,
-                ordinario,
-                iconica_da_nove,
-                sconfitta_iconica,
-                fonte_unica,
-            ],
+            [valido, data_errata, ordinario, iconica, sconfitta, fonte_unica],
             "05-22",
         )
 
-        self.assertEqual(risultato, [valido, iconica_da_nove])
+        self.assertEqual(risultato, [valido, iconica])
 
-    def test_rifiuta_una_data_di_calendario_impossibile(self):
+    def test_rifiuta_data_impossibile(self):
         impossibile = evento_valido(event_date="1996-02-30")
         self.assertEqual(script.valida_eventi([impossibile], "02-30"), [])
 
-    def test_conserva_al_massimo_tre_eventi_importanti(self):
+    def test_conserva_al_massimo_tre_eventi(self):
         eventi = [
             evento_valido(
                 event_date=f"{anno}-05-22",
@@ -80,17 +77,13 @@ class TestRisposteGemini(unittest.TestCase):
         ]
 
         risultato = script.valida_eventi(eventi, "05-22")
-
         self.assertEqual(len(risultato), 3)
         self.assertEqual([evento["year"] for evento in risultato], [1996, 2000, 2005])
 
 
 class TestFallbackGemini(unittest.TestCase):
-    def test_catena_predefinita_usa_tre_modelli_stabili(self):
-        with patch.dict(
-            "os.environ", {"GEMINI_MODEL": "", "GEMINI_MODELS": ""}, clear=False
-        ):
-            del script.os.environ["GEMINI_MODELS"]
+    def test_catena_predefinita_usa_tre_modelli(self):
+        with patch.dict("os.environ", {"GEMINI_MODEL": ""}, clear=True):
             self.assertEqual(
                 script.modelli_gemini_configurati(),
                 (
@@ -100,18 +93,17 @@ class TestFallbackGemini(unittest.TestCase):
                 ),
             )
 
-    def test_variabile_legacy_aggiunge_i_fallback_predefiniti(self):
+    def test_variabile_legacy_aggiunge_fallback(self):
         with patch.dict(
             "os.environ",
             {"GEMINI_MODEL": "modello-personalizzato"},
             clear=True,
         ):
-            self.assertEqual(
-                script.modelli_gemini_configurati()[0], "modello-personalizzato"
-            )
-            self.assertEqual(len(script.modelli_gemini_configurati()), 4)
+            modelli = script.modelli_gemini_configurati()
+            self.assertEqual(modelli[0], "modello-personalizzato")
+            self.assertEqual(len(modelli), 4)
 
-    def test_errore_del_modello_attiva_il_fallback(self):
+    def test_modello_inesistente_attiva_fallback(self):
         chiamate = []
 
         class Models:
@@ -133,7 +125,56 @@ class TestFallbackGemini(unittest.TestCase):
         self.assertEqual(risposta.text, '{"events": []}')
         self.assertEqual(chiamate, ["primario", "fallback-1"])
 
-    def test_errore_di_autenticazione_non_viene_nascosto(self):
+    def test_errore_temporaneo_riprova_stesso_modello(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if len(chiamate) == 1:
+                    raise RuntimeError("503 UNAVAILABLE: high demand")
+                return SimpleNamespace(text='{"events": []}')
+
+        client = SimpleNamespace(models=Models())
+
+        with patch("script.random.uniform", return_value=0), patch("script.time.sleep") as sleep:
+            risposta = script.chiama_gemini_con_fallback(
+                client,
+                ("primario", "fallback"),
+                "prompt",
+                None,
+                max_retries=2,
+            )
+
+        self.assertEqual(risposta.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primario", "primario"])
+        sleep.assert_called_once_with(1)
+
+    def test_quota_esaurita_non_prova_fallback(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                raise RuntimeError(
+                    "429 RESOURCE_EXHAUSTED: You exceeded your current quota, "
+                    "please check your plan and billing details."
+                )
+
+        client = SimpleNamespace(models=Models())
+
+        with self.assertRaisesRegex(RuntimeError, "Quota Gemini esaurita"):
+            script.chiama_gemini_con_fallback(
+                client,
+                ("primario", "fallback"),
+                "prompt",
+                None,
+                max_retries=3,
+            )
+
+        self.assertEqual(chiamate, ["primario"])
+
+    def test_errore_autenticazione_non_viene_nascosto(self):
         chiamate = []
 
         class Models:
@@ -142,6 +183,7 @@ class TestFallbackGemini(unittest.TestCase):
                 raise RuntimeError("401 UNAUTHENTICATED")
 
         client = SimpleNamespace(models=Models())
+
         with self.assertRaisesRegex(RuntimeError, "401"):
             script.chiama_gemini_con_fallback(
                 client,
@@ -153,36 +195,9 @@ class TestFallbackGemini(unittest.TestCase):
 
         self.assertEqual(chiamate, ["primario"])
 
-    def test_dopo_un_picco_riprova_l_intera_catena(self):
-        chiamate = []
-
-        class Models:
-            def generate_content(self, model, contents, config):
-                chiamate.append(model)
-                if len(chiamate) <= 2:
-                    raise RuntimeError("503 UNAVAILABLE: high demand")
-                return SimpleNamespace(text='{"events": []}')
-
-        client = SimpleNamespace(models=Models())
-        with patch("script.random.uniform", return_value=0), patch(
-            "script.time.sleep"
-        ) as sleep:
-            risposta = script.chiama_gemini_con_fallback(
-                client,
-                ("primario", "fallback"),
-                "prompt",
-                None,
-                max_retries=1,
-                round_delays=(60,),
-            )
-
-        self.assertEqual(risposta.text, '{"events": []}')
-        self.assertEqual(chiamate, ["primario", "fallback", "primario"])
-        sleep.assert_called_once_with(60)
-
 
 class TestDuplicati(unittest.TestCase):
-    def test_stesso_evento_con_testo_e_giorno_diversi_viene_riconosciuto(self):
+    def test_stesso_evento_con_testo_diverso_viene_riconosciuto(self):
         pubblicato = evento_valido()
         nuovo = evento_valido(
             event_date="1996-05-23",
@@ -208,7 +223,9 @@ class TestDuplicati(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             percorso = Path(directory) / "eventi.json"
             script.salva_nello_storico(
-                [evento_valido()], "2026-07-31T07:30:00+02:00", percorso
+                [evento_valido()],
+                "2026-07-31T07:30:00+02:00",
+                percorso,
             )
             contenuto = json.loads(percorso.read_text(encoding="utf-8"))
 
@@ -218,10 +235,11 @@ class TestDuplicati(unittest.TestCase):
 
 class TestFormattazione(unittest.TestCase):
     def test_html_del_modello_viene_escapato(self):
-        evento = evento_valido(title="Trionfo europeo a Roma")
+        evento = evento_valido(title="Trionfo <europeo> a Roma")
         testo = script.formatta_rubrica([evento], "22 MAGGIO")
+
         self.assertIn("1️⃣9️⃣9️⃣6️⃣", testo)
-        self.assertIn("<b>Trionfo europeo a Roma</b>", testo)
+        self.assertIn("<b>Trionfo &lt;europeo&gt; a Roma</b>", testo)
         self.assertIn("<i>La Juventus conquista", testo)
 
 
