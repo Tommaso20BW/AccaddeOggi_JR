@@ -41,14 +41,22 @@ CATEGORIE_AMMESSE = {
     "TROFEO",
     "SCUDETTO",
     "PARTITA_ICONICA",
+    "PARTITA_MEMORABILE",
     "RECORD_STORICO",
+    "DEBUTTO_ICONICO",
+    "TRAGUARDO_STORICO",
+    "ACQUISTO_ICONICO",
 }
 
 ESITO_RICHIESTO_PER_CATEGORIA = {
     "TROFEO": "TROFEO_CONQUISTATO",
     "SCUDETTO": "SCUDETTO_CONQUISTATO",
     "PARTITA_ICONICA": "VITTORIA",
+    "PARTITA_MEMORABILE": "VITTORIA",
     "RECORD_STORICO": "RECORD_POSITIVO",
+    "DEBUTTO_ICONICO": "DEBUTTO",
+    "TRAGUARDO_STORICO": "TRAGUARDO_RAGGIUNTO",
+    "ACQUISTO_ICONICO": "ACQUISTO_UFFICIALE",
 }
 
 STOPWORD_IDENTITA = {
@@ -392,44 +400,53 @@ def scopri_candidati(
     data_italiana,
     models=None,
 ):
-    """Prima passata: trova eventi juventini di eccezionale rilievo."""
+    """Prima passata: trova eventi juventini con importanza almeno 8/10."""
     istruzioni = """
 Sei un ricercatore di storia della Juventus. Devi proporre candidati, non
-scrivere un post. Usa Google Search e sii estremamente selettivo.
+scrivere un post. Usa Google Search e sii molto selettivo.
 
-Considera esclusivamente la prima squadra maschile e soltanto fatti avvenuti
-esattamente nella data chiesta.
+Considera esclusivamente la prima squadra maschile e fatti avvenuti
+esattamente nella data richiesta.
 
-Un evento è candidabile solo se appartiene a uno di questi casi:
-1. conquista di un trofeo ufficiale o certezza matematica di uno Scudetto;
-2. partita universalmente ricordata come una delle più iconiche della storia
-   del club, come una finale, un'impresa europea o una rimonta eccezionale;
-3. record positivo di squadra di importanza nazionale o europea, storico e
-   ampiamente riconosciuto.
+Sono candidabili:
+1. trofei ufficiali e Scudetti matematicamente conquistati;
+2. partite iconiche o memorabili, finali, rimonte, imprese europee e vittorie
+   ancora oggi ricordate come capitoli importanti della storia juventina;
+3. record storici positivi di squadra;
+4. debutti davvero iconici di campioni o simboli del club;
+5. traguardi individuali eccezionali e storicamente rilevanti;
+6. acquisti ufficiali realmente epocali o iconici, tra i più importanti
+   della storia del club.
 
-Usa come riferimento Juventus-Atletico Madrid 3-0 del 12 marzo 2019: una
-rimonta europea di quel peso è una PARTITA_ICONICA. Un normale big match,
-anche se vinto nettamente, non raggiunge automaticamente quella soglia.
+Per ACQUISTO_ICONICO usa soltanto la data dell'annuncio ufficiale Juventus.
+Non usare indiscrezioni, accordi verbali, arrivi in aeroporto, visite
+mediche, presentazioni o primi allenamenti. Non basta che il giocatore fosse
+costoso o titolare: l'operazione deve essere ancora oggi riconosciuta come
+una delle più importanti o simboliche della storia juventina.
 
-Scarta senza eccezioni: normali vittorie di campionato o coppa, amichevoli,
-compleanni, nascite, morti, acquisti, cessioni, rinnovi, presentazioni,
-esordi, singoli gol, presenze, record individuali, anniversari, sorteggi,
-premiazioni, sconfitte, eliminazioni, eventi negativi, Women, Next Gen,
-Primavera e giovanili.
+Benchmark:
+- Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è PARTITA_ICONICA;
+- un normale big match non è automaticamente memorabile;
+- un semplice esordio, una centesima presenza o un acquisto ordinario non
+  raggiungono la soglia.
 
-Quando il rilievo o la data non sono certi, non proporre l'evento. È
-preferibile restituire zero eventi invece di riempire il post.
+Scarta: normali vittorie, amichevoli, compleanni, nascite, morti, cessioni,
+rinnovi, semplici presentazioni, singoli gol ordinari, ricorrenze minori,
+sorteggi, premiazioni, sconfitte, eliminazioni, eventi negativi, Women,
+Next Gen, Primavera e giovanili.
 
-Rispondi esclusivamente con JSON valido, senza Markdown:
+È meglio restituire zero eventi che forzare candidati deboli.
+
+Rispondi esclusivamente con JSON valido:
 {
   "events": [
     {
       "event_date": "YYYY-MM-DD",
       "year": 1234,
       "category": "categoria ammessa",
-      "outcome": "esito positivo ammesso",
-      "competition": "competizione o record",
-      "opponent": "avversario oppure stringa vuota",
+      "outcome": "esito ammesso",
+      "competition": "competizione, record o contesto",
+      "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo breve",
       "description": "una frase fattuale breve",
       "reason": "motivo del rilievo storico"
@@ -437,33 +454,30 @@ Rispondi esclusivamente con JSON valido, senza Markdown:
   ]
 }
 
-Inserisci al massimo 5 candidati.
+Inserisci al massimo 8 candidati.
 
-Categorie consentite:
-TROFEO, SCUDETTO, PARTITA_ICONICA, RECORD_STORICO.
+Categorie:
+TROFEO, SCUDETTO, PARTITA_ICONICA, PARTITA_MEMORABILE, RECORD_STORICO,
+DEBUTTO_ICONICO, TRAGUARDO_STORICO, ACQUISTO_ICONICO.
 
-Outcome consentiti:
-TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO.
+Outcome:
+TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
+DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
 """
-
     prompt = (
-        f"Cerca eventi juventini di importanza eccezionale avvenuti il "
-        f"{data_italiana} di un qualsiasi anno storico. Giorno e mese "
+        f"Cerca eventi juventini con importanza potenziale almeno 8/10 "
+        f"avvenuti il {data_italiana} di qualsiasi anno. Giorno e mese "
         f"devono essere {giorno_mese}; event_date deve contenere l'anno "
-        "reale dell'evento. Non includere eventi solo vagamente "
-        "interessanti e non cambiare giorno per farli rientrare."
+        "reale. Non cambiare data e non riempire la lista con eventi ordinari."
     )
-
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
         config=_config_con_ricerca(istruzioni),
     )
-
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
-
     return eventi if isinstance(eventi, list) else []
 
 
@@ -474,34 +488,42 @@ def verifica_candidati(
     data_italiana,
     models=None,
 ):
-    """Seconda passata: verifica data, fonti e importanza."""
+    """Seconda passata: verifica data, fonti, categoria e importanza."""
     if not candidati:
         return []
 
     istruzioni = """
-Sei il fact-checker finale di una rubrica Juventus. Non fidarti della lista
-ricevuta: verifica ogni candidato da zero con Google Search.
+Sei il fact-checker finale di una rubrica Juventus. Verifica ogni candidato
+da zero con Google Search.
 
-Approva un evento soltanto se:
-- almeno due fonti web affidabili e indipendenti confermano lo stesso fatto;
-- le fonti confermano giorno, mese e anno esatti;
-- riguarda la prima squadra maschile della Juventus;
-- non è una sconfitta, eliminazione o evento negativo;
-- raggiunge almeno 8/10.
+Approva soltanto se:
+- almeno due fonti web affidabili e indipendenti confermano il fatto;
+- giorno, mese e anno sono esatti;
+- riguarda la prima squadra maschile;
+- è positivo o celebrativo;
+- merita davvero 8, 9 o 10.
 
-Scala:
-10 = conquista di Champions/Coppa dei Campioni oppure una delle imprese o
-dei record di squadra più celebri e indiscutibili della storia del club.
-10 = Champions, Coppa dei Campioni, Scudetti e imprese leggendarie.
-9 = grandi trofei e record storici di squadra.
-8 = anniversari storicamente rilevanti come debutti di giocatori iconici, traguardi eccezionali, partite memorabili e record importanti.
-7 o meno = normali vittorie, curiosità, semplici esordi, primi gol o ricorrenze minori. Questi eventi vanno scartati.
+Scala editoriale:
+10 = evento epocale: Champions/Coppa dei Campioni, Scudetto, impresa
+leggendaria o acquisto tra i più clamorosi nella storia del calcio.
+9 = grande trofeo, impresa universalmente iconica, record storico enorme,
+debutto o traguardo di un simbolo assoluto, acquisto di un fuoriclasse con
+enorme risonanza e impatto storico.
+8 = evento ancora oggi molto interessante per un tifoso juventino: partita
+memorabile, debutto iconico, traguardo eccezionale o acquisto simbolico e
+storicamente rilevante. Deve essere chiaramente sopra una normale ricorrenza.
+7 o meno = normale vittoria, curiosità, semplice debutto, primo gol,
+centesima presenza ordinaria, operazione di mercato normale o giocatore
+costoso ma non storico. Va scartato.
+
+Per ACQUISTO_ICONICO:
+- usa soltanto la data dell'annuncio ufficiale Juventus;
+- non approvare indiscrezioni, visite mediche, aeroporto o presentazione;
+- non basta il prezzo;
+- assegna 8+ solo a operazioni considerate ancora oggi davvero iconiche.
 
 Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è il benchmark di una
-PARTITA_ICONICA che raggiunge la soglia.
-
-Non promuovere eventi solo per arrivare a un certo numero. Zero eventi è un
-risultato corretto.
+PARTITA_ICONICA. Non promuovere eventi solo per arrivare a tre.
 
 Rispondi esclusivamente con JSON valido:
 {
@@ -510,13 +532,13 @@ Rispondi esclusivamente con JSON valido:
       "event_date": "YYYY-MM-DD",
       "year": 1234,
       "category": "categoria ammessa",
-      "outcome": "esito positivo ammesso",
-      "importance": 9,
-      "competition": "competizione o record",
-      "opponent": "avversario o stringa vuota",
+      "outcome": "esito ammesso",
+      "importance": 8,
+      "competition": "competizione, record o contesto",
+      "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo da due a cinque parole",
       "description": "una sola frase fattuale breve",
-      "canonical_id": "ANNO|CATEGORIA|COMPETIZIONE|AVVERSARIO",
+      "canonical_id": "ANNO|CATEGORIA|CONTESTO|SOGGETTO",
       "source_urls": [
         "https://fonte1.example/",
         "https://fonte2.example/"
@@ -525,29 +547,32 @@ Rispondi esclusivamente con JSON valido:
   ]
 }
 
-Il titolo deve contenere da 2 a 5 parole. La descrizione deve contenere una
-sola frase, massimo 240 caratteri, senza HTML, Markdown o URL.
+Categorie:
+TROFEO, SCUDETTO, PARTITA_ICONICA, PARTITA_MEMORABILE, RECORD_STORICO,
+DEBUTTO_ICONICO, TRAGUARDO_STORICO, ACQUISTO_ICONICO.
 
-Restituisci al massimo 3 eventi, dal più vecchio al più recente.
+Outcome:
+TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
+DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
+
+Titolo: 2-5 parole. Descrizione: una frase, massimo 240 caratteri, senza
+HTML, Markdown o URL. Restituisci tutti gli eventi validi 8-10, fino a un
+massimo di 8; il codice sceglierà i migliori tre.
 """
-
     prompt = (
-        f"La ricorrenza richiesta è il {data_italiana}, giorno e mese "
-        f"{giorno_mese}, in qualsiasi anno storico. Verifica rigorosamente "
-        "questi candidati e usa in event_date l'anno reale del fatto:\n"
+        f"La ricorrenza è il {data_italiana}, giorno e mese {giorno_mese}. "
+        "Verifica rigorosamente questi candidati, assegna importanza 8-10 "
+        "solo quando meritata e usa l'anno reale in event_date:\n"
         f"{json.dumps(candidati, ensure_ascii=False)}"
     )
-
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
         config=_config_con_ricerca(istruzioni),
     )
-
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
-
     return eventi if isinstance(eventi, list) else []
 
 
@@ -568,7 +593,7 @@ def _domini_fonti(urls):
 
 
 def valida_eventi(eventi, giorno_mese):
-    """Applica vincoli deterministici alla risposta di Gemini. Accetta eventi da 8 a 10."""
+    """Applica vincoli deterministici alla risposta di Gemini."""
     validi = []
 
     for evento in eventi:
@@ -678,8 +703,9 @@ def valida_eventi(eventi, giorno_mese):
 
     validi.sort(
         key=lambda voce: (
-            voce["year"],
             -voce["importance"],
+            voce["year"],
+            voce["canonical_id"],
         )
     )
 
@@ -800,7 +826,7 @@ def _anno_pubblicazione(evento):
     if not published_at:
         return None
 
-    corrispondenza = re.match(r"^(\\d{4})", published_at)
+    corrispondenza = re.match(r"^(\d{4})", published_at)
 
     if not corrispondenza:
         return None
@@ -1015,7 +1041,7 @@ def prepara_accadde_oggi(
 
     print(
         "Eventi che superano data, fonti e "
-        f"soglia 9/10: {len(validi)}"
+        f"soglia 8/10: {len(validi)}"
     )
 
     storico = carica_storico(
