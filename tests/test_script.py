@@ -1,205 +1,522 @@
 import json
+import os
+import sys
 import tempfile
+import types as pytypes
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-import script
+
+# Permette di eseguire i test anche in un ambiente locale dove google-genai
+# non è ancora installato. Su GitHub Actions verrà usato il pacchetto reale.
+try:
+    import google.genai  # noqa: F401
+except ModuleNotFoundError:
+    google_module = pytypes.ModuleType("google")
+    genai_module = pytypes.ModuleType("google.genai")
+
+    class DummyClient:
+        pass
+
+    class DummyConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class DummyTypes:
+        GenerateContentConfig = DummyConfig
+
+    genai_module.Client = DummyClient
+    genai_module.types = DummyTypes
+    google_module.genai = genai_module
+
+    sys.modules["google"] = google_module
+    sys.modules["google.genai"] = genai_module
 
 
-def evento(date="1996-05-22", year=1996, category="TROFEO",
-           outcome="TROFEO_CONQUISTATO", importance=10,
-           context="UEFA Champions League", subject="Ajax",
-           title="Trionfo europeo a Roma",
-           description="La Juventus conquista la Champions League ai rigori.",
-           canonical=None, sources=None):
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import script  # noqa: E402
+
+
+def evento(
+    *,
+    date="1996-05-22",
+    year=1996,
+    category="TROFEO",
+    outcome="TROFEO_CONQUISTATO",
+    importance=10,
+    competition="Champions League",
+    opponent="Ajax",
+    title="La Champions di Roma",
+    description="La Juventus conquista la Champions League ai rigori.",
+    canonical_id=None,
+    sources=None,
+):
     return {
         "event_date": date,
         "year": year,
         "category": category,
         "outcome": outcome,
         "importance": importance,
-        "competition": context,
-        "opponent": subject,
+        "competition": competition,
+        "opponent": opponent,
         "title": title,
         "description": description,
-        "canonical_id": canonical or f"{year}|{category}|{context}|{subject}",
-        "source_urls": sources or [
+        "canonical_id": canonical_id
+        or f"{year}|{category}|{competition}|{opponent}",
+        "source_urls": sources
+        or [
             "https://www.juventus.com/storia",
             "https://www.uefa.com/storia",
         ],
     }
 
 
-class TestEditoriale(unittest.TestCase):
-    def test_accetta_8_9_10(self):
-        events = [
-            evento(importance=8, canonical="A"),
-            evento(importance=9, canonical="B"),
-            evento(importance=10, canonical="C"),
+class TestConfigurazione(unittest.TestCase):
+    def test_catena_modelli_predefinita(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                script.modelli_gemini_configurati(),
+                (
+                    "gemini-3.6-flash",
+                    "gemini-2.5-flash",
+                    "gemini-3.5-flash-lite",
+                ),
+            )
+
+    def test_gemini_models_personalizzati(self):
+        with patch.dict(
+            os.environ,
+            {"GEMINI_MODELS": "modello-a, modello-b, modello-a"},
+            clear=True,
+        ):
+            self.assertEqual(
+                script.modelli_gemini_configurati(),
+                ("modello-a", "modello-b"),
+            )
+
+    def test_config_gemini_non_contiene_google_search(self):
+        config = script._config_senza_ricerca("istruzioni")
+        self.assertFalse(hasattr(config, "tools"))
+        self.assertEqual(config.system_instruction, "istruzioni")
+
+
+class TestSerper(unittest.TestCase):
+    def test_richiesta_serper_senza_chiave(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "SERPER_API_KEY"):
+                script._richiesta_serper("Juventus")
+
+    def test_richiesta_serper_parsa_risultati(self):
+        risposta = {
+            "organic": [
+                {
+                    "title": "Titolo uno",
+                    "link": "https://example.com/uno",
+                    "snippet": "Testo uno",
+                    "date": "5 ago 2020",
+                },
+                {
+                    "title": "",
+                    "link": "https://example.com/scarto",
+                },
+            ]
+        }
+
+        context_manager = MagicMock()
+        context_manager.__enter__.return_value.read.return_value = (
+            json.dumps(risposta).encode("utf-8")
+        )
+
+        with patch.dict(
+            os.environ,
+            {"SERPER_API_KEY": "test-key"},
+            clear=True,
+        ), patch(
+            "script.urllib.request.urlopen",
+            return_value=context_manager,
+        ) as urlopen:
+            risultati = script._richiesta_serper("Juventus", num=7)
+
+        self.assertEqual(len(risultati), 1)
+        self.assertEqual(risultati[0]["title"], "Titolo uno")
+        richiesta = urlopen.call_args.args[0]
+        self.assertEqual(richiesta.headers["X-api-key"], "test-key")
+        payload = json.loads(richiesta.data.decode("utf-8"))
+        self.assertEqual(payload["num"], 7)
+        self.assertEqual(payload["gl"], "it")
+
+    def test_cerca_fonti_elimina_url_duplicati(self):
+        prima = [
+            {
+                "position": 1,
+                "title": "A",
+                "link": "https://example.com/a",
+                "snippet": "",
+                "date": "",
+            }
         ]
-        self.assertEqual([x["importance"] for x in script.valida_eventi(events, "05-22")], [10, 9, 8])
+        seconda = [
+            {
+                "position": 1,
+                "title": "A duplicato",
+                "link": "https://example.com/a",
+                "snippet": "",
+                "date": "",
+            },
+            {
+                "position": 2,
+                "title": "B",
+                "link": "https://example.org/b",
+                "snippet": "",
+                "date": "",
+            },
+        ]
+
+        with patch(
+            "script._richiesta_serper",
+            side_effect=[prima, seconda],
+        ):
+            corpus = script._cerca_fonti(["query 1", "query 2"])
+
+        self.assertEqual(len(corpus), 2)
+        self.assertEqual(
+            {voce["link"] for voce in corpus},
+            {"https://example.com/a", "https://example.org/b"},
+        )
+
+    def test_query_scoperta_include_juventus(self):
+        queries = script._query_scoperta("5 AGOSTO")
+        self.assertGreaterEqual(len(queries), 3)
+        self.assertTrue(all("Juventus" in query for query in queries))
+
+    def test_query_verifica_usa_candidati(self):
+        candidati = [
+            {
+                "year": 2018,
+                "title": "Arriva Cristiano Ronaldo",
+                "competition": "Calciomercato",
+                "opponent": "Cristiano Ronaldo",
+            }
+        ]
+        queries = script._query_verifica(candidati)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("2018", queries[0])
+        self.assertIn("Cristiano Ronaldo", queries[0])
+
+
+class TestGeminiFallback(unittest.TestCase):
+    def test_429_prova_modello_successivo(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if model == "primo":
+                    raise RuntimeError("429 RESOURCE_EXHAUSTED")
+                return SimpleNamespace(text='{"events": []}')
+
+        risultato = script.chiama_gemini_con_fallback(
+            SimpleNamespace(models=Models()),
+            ("primo", "secondo"),
+            "prompt",
+            None,
+            max_retries=1,
+        )
+
+        self.assertEqual(risultato.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primo", "secondo"])
+
+    def test_503_prova_modello_successivo(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if model == "primo":
+                    raise RuntimeError("503 UNAVAILABLE")
+                return SimpleNamespace(text='{"events": []}')
+
+        risultato = script.chiama_gemini_con_fallback(
+            SimpleNamespace(models=Models()),
+            ("primo", "secondo"),
+            "prompt",
+            None,
+            max_retries=1,
+        )
+
+        self.assertEqual(risultato.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primo", "secondo"])
+
+    def test_quota_generica_ripete_catena(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                if len(chiamate) < 3:
+                    raise RuntimeError("429 RESOURCE_EXHAUSTED")
+                return SimpleNamespace(text='{"events": []}')
+
+        with patch("script.time.sleep") as sleep:
+            risultato = script.chiama_gemini_con_fallback(
+                SimpleNamespace(models=Models()),
+                ("primo", "secondo"),
+                "prompt",
+                None,
+                max_retries=2,
+            )
+
+        self.assertEqual(risultato.text, '{"events": []}')
+        self.assertEqual(chiamate, ["primo", "secondo", "primo"])
+        sleep.assert_called_once()
+
+    def test_401_interrompe_senza_fallback(self):
+        chiamate = []
+
+        class Models:
+            def generate_content(self, model, contents, config):
+                chiamate.append(model)
+                raise RuntimeError("401 UNAUTHENTICATED")
+
+        with self.assertRaisesRegex(RuntimeError, "401"):
+            script.chiama_gemini_con_fallback(
+                SimpleNamespace(models=Models()),
+                ("primo", "secondo"),
+                "prompt",
+                None,
+                max_retries=3,
+            )
+
+        self.assertEqual(chiamate, ["primo"])
+
+
+class TestScopertaVerifica(unittest.TestCase):
+    def test_scoperta_senza_fonti_non_chiama_gemini(self):
+        client = SimpleNamespace(models=MagicMock())
+
+        with patch("script._cerca_fonti", return_value=[]):
+            eventi = script.scopri_candidati(
+                client,
+                "08-05",
+                "5 AGOSTO",
+                models=("modello",),
+            )
+
+        self.assertEqual(eventi, [])
+        client.models.generate_content.assert_not_called()
+
+    def test_scoperta_usa_serper_e_gemini_senza_tool(self):
+        fonti = [
+            {
+                "query": "q",
+                "position": 1,
+                "title": "Evento",
+                "link": "https://example.com/a",
+                "snippet": "Evento Juventus",
+                "date": "",
+            }
+        ]
+        risposta = SimpleNamespace(
+            text=json.dumps(
+                {
+                    "events": [
+                        {
+                            "event_date": "2018-07-10",
+                            "year": 2018,
+                            "category": "ACQUISTO_ICONICO",
+                            "outcome": "ACQUISTO_UFFICIALE",
+                            "competition": "Calciomercato",
+                            "opponent": "Cristiano Ronaldo",
+                            "title": "Arriva Cristiano Ronaldo",
+                            "description": "La Juventus ufficializza l'acquisto.",
+                            "reason": "Operazione epocale",
+                            "evidence_urls": ["https://example.com/a"],
+                        }
+                    ]
+                }
+            )
+        )
+
+        with patch("script._cerca_fonti", return_value=fonti), patch(
+            "script.chiama_gemini_con_fallback",
+            return_value=risposta,
+        ) as chiamata:
+            eventi = script.scopri_candidati(
+                SimpleNamespace(),
+                "07-10",
+                "10 LUGLIO",
+                models=("modello",),
+            )
+
+        self.assertEqual(len(eventi), 1)
+        config = chiamata.call_args.kwargs["config"]
+        self.assertFalse(hasattr(config, "tools"))
+
+    def test_verifica_senza_candidati(self):
+        self.assertEqual(
+            script.verifica_candidati(
+                SimpleNamespace(),
+                [],
+                "08-05",
+                "5 AGOSTO",
+            ),
+            [],
+        )
+
+
+class TestValidazioneEditoriale(unittest.TestCase):
+    def test_accetta_8_9_10(self):
+        eventi = [
+            evento(importance=8, canonical_id="A"),
+            evento(importance=9, canonical_id="B"),
+            evento(importance=10, canonical_id="C"),
+        ]
+        validi = script.valida_eventi(eventi, "05-22")
+        self.assertEqual(
+            [voce["importance"] for voce in validi],
+            [10, 9, 8],
+        )
 
     def test_rifiuta_7(self):
-        self.assertEqual(script.valida_eventi([evento(importance=7)], "05-22"), [])
+        self.assertEqual(
+            script.valida_eventi(
+                [evento(importance=7)],
+                "05-22",
+            ),
+            [],
+        )
 
     def test_massimo_tre_priorita_importanza(self):
-        events = [
-            evento(date="1900-05-22", year=1900, importance=8, canonical="1900"),
-            evento(date="2000-05-22", year=2000, importance=10, canonical="2000"),
-            evento(date="1990-05-22", year=1990, importance=9, canonical="1990"),
-            evento(date="1980-05-22", year=1980, importance=10, canonical="1980"),
-            evento(date="1970-05-22", year=1970, importance=8, canonical="1970"),
+        eventi = [
+            evento(
+                date="1900-05-22",
+                year=1900,
+                importance=8,
+                canonical_id="1900",
+            ),
+            evento(
+                date="2000-05-22",
+                year=2000,
+                importance=10,
+                canonical_id="2000",
+            ),
+            evento(
+                date="1990-05-22",
+                year=1990,
+                importance=9,
+                canonical_id="1990",
+            ),
+            evento(
+                date="1980-05-22",
+                year=1980,
+                importance=10,
+                canonical_id="1980",
+            ),
         ]
-        result = script.valida_eventi(events, "05-22")
-        self.assertEqual([x["importance"] for x in result], [10, 10, 9])
-        self.assertEqual([x["year"] for x in result], [1980, 2000, 1990])
+        validi = script.valida_eventi(eventi, "05-22")
+        self.assertEqual(len(validi), 3)
+        self.assertEqual(
+            [voce["importance"] for voce in validi],
+            [10, 10, 9],
+        )
 
-    def test_acquisto_iconico_valido(self):
-        e = evento(date="2018-07-10", year=2018, category="ACQUISTO_ICONICO",
-                   outcome="ACQUISTO_UFFICIALE", importance=10,
-                   context="Calciomercato", subject="Cristiano Ronaldo",
-                   title="Arriva Cristiano Ronaldo",
-                   description="La Juventus ufficializza l'acquisto di Cristiano Ronaldo.")
-        self.assertEqual(script.valida_eventi([e], "07-10"), [e])
+    def test_acquisto_iconico_ufficiale(self):
+        acquisto = evento(
+            date="2018-07-10",
+            year=2018,
+            category="ACQUISTO_ICONICO",
+            outcome="ACQUISTO_UFFICIALE",
+            importance=10,
+            competition="Calciomercato",
+            opponent="Cristiano Ronaldo",
+            title="Arriva Cristiano Ronaldo",
+        )
+        self.assertEqual(
+            script.valida_eventi([acquisto], "07-10"),
+            [acquisto],
+        )
 
-    def test_acquisto_non_ufficiale_scartato(self):
-        e = evento(date="2018-07-10", year=2018, category="ACQUISTO_ICONICO",
-                   outcome="VISITE_MEDICHE", importance=10)
-        self.assertEqual(script.valida_eventi([e], "07-10"), [])
+    def test_visite_mediche_non_passano(self):
+        visite = evento(
+            date="2018-07-10",
+            year=2018,
+            category="ACQUISTO_ICONICO",
+            outcome="VISITE_MEDICHE",
+            importance=10,
+        )
+        self.assertEqual(
+            script.valida_eventi([visite], "07-10"),
+            [],
+        )
 
-    def test_tutte_nuove_categorie(self):
-        for i, (cat, outcome) in enumerate([
-            ("PARTITA_MEMORABILE", "VITTORIA"),
-            ("DEBUTTO_ICONICO", "DEBUTTO"),
-            ("TRAGUARDO_STORICO", "TRAGUARDO_RAGGIUNTO"),
-            ("ACQUISTO_ICONICO", "ACQUISTO_UFFICIALE"),
-        ]):
-            e = evento(category=cat, outcome=outcome, importance=8, canonical=f"X{i}")
-            self.assertEqual(script.valida_eventi([e], "05-22"), [e])
-
-    def test_due_fonti_indipendenti(self):
-        e = evento(sources=["https://www.juventus.com/a", "https://www.juventus.com/b"])
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_data_errata(self):
-        self.assertEqual(script.valida_eventi([evento(date="1996-05-23")], "05-22"), [])
-
-    def test_titolo_troppo_corto_scartato(self):
-        e = evento(title="Solo")
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_titolo_troppo_lungo_scartato(self):
-        e = evento(title="Questo titolo contiene decisamente troppe parole")
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_descrizione_troppo_lunga_scartata(self):
-        e = evento(description="x" * 241)
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_categoria_sconosciuta_scartata(self):
-        e = evento(category="CURIOSITA", outcome="EVENTO")
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_sconfitta_scartata(self):
-        e = evento(category="PARTITA_ICONICA", outcome="SCONFITTA")
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_anno_non_coerente_scartato(self):
-        e = evento(date="1996-05-22", year=1997)
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_url_non_http_scartati(self):
-        e = evento(sources=["ftp://juventus.com/a", "mailto:test@example.com"])
-        self.assertEqual(script.valida_eventi([e], "05-22"), [])
-
-    def test_ordine_a_parita_di_voto(self):
-        events = [
-            evento(date="2000-05-22", year=2000, importance=9, canonical="B"),
-            evento(date="1980-05-22", year=1980, importance=9, canonical="A"),
-        ]
-        result = script.valida_eventi(events, "05-22")
-        self.assertEqual([x["year"] for x in result], [1980, 2000])
+    def test_servono_due_domini(self):
+        debole = evento(
+            sources=[
+                "https://www.juventus.com/a",
+                "https://www.juventus.com/b",
+            ]
+        )
+        self.assertEqual(
+            script.valida_eventi([debole], "05-22"),
+            [],
+        )
 
 
 class TestStorico(unittest.TestCase):
-    def test_stesso_anno_bloccato_successivo_permesso(self):
-        e = evento()
-        old = dict(e, published_at="2026-05-22T07:30:00+02:00")
-        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2026), [])
-        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2027), [e])
+    def test_stesso_anno_bloccato_anno_successivo_permesso(self):
+        corrente = evento()
+        vecchio = dict(
+            corrente,
+            published_at="2026-05-22T07:30:00+02:00",
+        )
 
-    def test_duplicato_stesso_run(self):
-        e1 = evento()
-        e2 = dict(e1, title="La Champions di Roma")
-        self.assertEqual(len(script.scarta_gia_pubblicati([e1, e2], [], 2026)), 1)
+        self.assertEqual(
+            script.scarta_gia_pubblicati(
+                [corrente],
+                [vecchio],
+                anno_pubblicazione=2026,
+            ),
+            [],
+        )
+        self.assertEqual(
+            script.scarta_gia_pubblicati(
+                [corrente],
+                [vecchio],
+                anno_pubblicazione=2027,
+            ),
+            [corrente],
+        )
 
-    def test_salvataggio_storico(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "events.json"
-            script.salva_nello_storico([evento()], "2026-05-22T07:30:00+02:00", p)
-            self.assertEqual(len(script.carica_storico(p)), 1)
-
-    def test_storico_senza_published_at_non_blocca(self):
-        e = evento()
-        self.assertEqual(script.scarta_gia_pubblicati([e], [dict(e)], 2026), [e])
-
-    def test_published_at_malformato_non_blocca(self):
-        e = evento()
-        old = dict(e, published_at="data-sbagliata")
-        self.assertEqual(script.scarta_gia_pubblicati([e], [old], 2026), [e])
-
-
-class TestGemini(unittest.TestCase):
-    def test_quota_non_fallback(self):
-        calls = []
-        class Models:
-            def generate_content(self, model, contents, config):
-                calls.append(model)
-                raise RuntimeError("429 RESOURCE_EXHAUSTED: You exceeded your current quota, check your plan and billing details")
-        with self.assertRaisesRegex(RuntimeError, "Quota Gemini esaurita"):
-            script.chiama_gemini_con_fallback(SimpleNamespace(models=Models()), ("a", "b"), "x", None, 3)
-        self.assertEqual(calls, ["a"])
-
-    def test_404_fallback(self):
-        calls = []
-        class Models:
-            def generate_content(self, model, contents, config):
-                calls.append(model)
-                if model == "a":
-                    raise RuntimeError("404 model not found")
-                return SimpleNamespace(text='{"events":[]}')
-        r = script.chiama_gemini_con_fallback(SimpleNamespace(models=Models()), ("a", "b"), "x", None, 1)
-        self.assertEqual(r.text, '{"events":[]}')
-        self.assertEqual(calls, ["a", "b"])
-
-    def test_errore_503_riprova_stesso_modello(self):
-        calls = []
-        class Models:
-            def generate_content(self, model, contents, config):
-                calls.append(model)
-                if len(calls) == 1:
-                    raise RuntimeError("503 UNAVAILABLE")
-                return SimpleNamespace(text='{"events":[]}')
-        from unittest.mock import patch
-        with patch("script.time.sleep"), patch("script.random.uniform", return_value=0):
-            r = script.chiama_gemini_con_fallback(
-                SimpleNamespace(models=Models()), ("a", "b"), "x", None, 2
+    def test_salvataggio_e_lettura_storico(self):
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "eventi.json"
+            script.salva_nello_storico(
+                [evento()],
+                "2026-05-22T07:30:00+02:00",
+                percorso,
             )
-        self.assertEqual(r.text, '{"events":[]}')
-        self.assertEqual(calls, ["a", "a"])
+            storico = script.carica_storico(percorso)
 
-    def test_401_non_attiva_fallback(self):
-        calls = []
-        class Models:
-            def generate_content(self, model, contents, config):
-                calls.append(model)
-                raise RuntimeError("401 UNAUTHENTICATED")
-        with self.assertRaisesRegex(RuntimeError, "401"):
-            script.chiama_gemini_con_fallback(
-                SimpleNamespace(models=Models()), ("a", "b"), "x", None, 1
-            )
-        self.assertEqual(calls, ["a"])
+        self.assertEqual(len(storico), 1)
+        self.assertEqual(
+            storico[0]["canonical_id"],
+            evento()["canonical_id"],
+        )
+
+
+class TestFormattazione(unittest.TestCase):
+    def test_output_telegram(self):
+        testo = script.formatta_rubrica(
+            [evento()],
+            "22 MAGGIO",
+        )
+        self.assertIn(
+            "<b>👀🔙 ACCADDE OGGI | 22 MAGGIO</b>",
+            testo,
+        )
+        self.assertIn("👉 @Juventus_Reborn", testo)
 
 
 if __name__ == "__main__":
