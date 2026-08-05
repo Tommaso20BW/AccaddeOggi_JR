@@ -57,6 +57,13 @@ PERCORSO_STORICO = Path(
     )
 )
 
+PERCORSO_SCARTATI = Path(
+    os.environ.get(
+        "REJECTED_EVENTS_FILE",
+        Path(__file__).resolve().parent / "data" / "eventi_scartati.json",
+    )
+)
+
 CATEGORIE_AMMESSE = {
     "TROFEO",
     "SCUDETTO",
@@ -795,10 +802,18 @@ def _domini_fonti(urls):
 
 
 def valida_eventi(eventi, giorno_mese):
-    """Applica vincoli deterministici alla risposta di Gemini."""
+    """
+    Applica i vincoli deterministici.
+
+    Restituisce soltanto gli eventi validi. Gli scarti vengono annotati
+    direttamente nell'evento con la chiave interna "_motivo_scarto", così
+    possono essere registrati in data/eventi_scartati.json.
+    """
     validi = []
 
     for evento in eventi:
+        motivo = None
+
         if not isinstance(evento, dict):
             continue
 
@@ -806,6 +821,7 @@ def valida_eventi(eventi, giorno_mese):
             anno = int(evento.get("year"))
             importanza = int(evento.get("importance"))
         except (TypeError, ValueError):
+            evento["_motivo_scarto"] = "anno o importanza non validi"
             continue
 
         titolo = str(evento.get("title", "")).strip()
@@ -830,62 +846,59 @@ def valida_eventi(eventi, giorno_mese):
         source_urls = evento.get("source_urls", [])
         event_date = str(evento.get("event_date", ""))
 
-        if not re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}",
-            event_date,
-        ):
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", event_date):
+            motivo = "event_date non valido"
+        elif event_date[5:] != giorno_mese:
+            motivo = "giorno o mese non corrispondente"
+        else:
+            try:
+                data_evento = datetime.strptime(
+                    event_date,
+                    "%Y-%m-%d",
+                ).date()
+            except ValueError:
+                motivo = "data impossibile o malformata"
+                data_evento = None
+
+            if motivo is None:
+                anno_corrente = datetime.now(FUSO_ORARIO).year
+
+                if anno != data_evento.year:
+                    motivo = "anno incoerente con event_date"
+                elif not 1897 <= anno <= anno_corrente:
+                    motivo = "anno fuori intervallo"
+                elif categoria not in CATEGORIE_AMMESSE:
+                    motivo = "categoria non ammessa"
+                elif outcome != ESITO_RICHIESTO_PER_CATEGORIA[categoria]:
+                    motivo = "outcome non ammesso per la categoria"
+                elif importanza < SOGLIA_IMPORTANZA:
+                    motivo = f"importanza sotto soglia ({importanza}/10)"
+                elif not 2 <= len(titolo.split()) <= 5:
+                    motivo = "titolo fuori dal limite di 2-5 parole"
+                elif not descrizione:
+                    motivo = "descrizione vuota"
+                elif len(descrizione) > 240:
+                    motivo = "descrizione oltre 240 caratteri"
+                elif any(
+                    segno in titolo + descrizione
+                    for segno in ("<", ">", "*", "http")
+                ):
+                    motivo = "markup o URL nel testo"
+                elif not canonical_id:
+                    motivo = "canonical_id mancante"
+                elif len(canonical_id) > 180:
+                    motivo = "canonical_id troppo lungo"
+                elif (
+                    not isinstance(source_urls, list)
+                    or len(_domini_fonti(source_urls)) < 2
+                ):
+                    motivo = "meno di due domini indipendenti"
+
+        if motivo is not None:
+            evento["_motivo_scarto"] = motivo
             continue
 
-        if event_date[5:] != giorno_mese:
-            continue
-
-        try:
-            data_evento = datetime.strptime(
-                event_date,
-                "%Y-%m-%d",
-            ).date()
-        except ValueError:
-            continue
-
-        anno_corrente = datetime.now(
-            FUSO_ORARIO
-        ).year
-
-        if anno != data_evento.year:
-            continue
-
-        if not 1897 <= anno <= anno_corrente:
-            continue
-
-        if categoria not in CATEGORIE_AMMESSE:
-            continue
-
-        if outcome != ESITO_RICHIESTO_PER_CATEGORIA[categoria]:
-            continue
-
-        if importanza < SOGLIA_IMPORTANZA:
-            continue
-
-        if not 2 <= len(titolo.split()) <= 5:
-            continue
-
-        if not descrizione or len(descrizione) > 240:
-            continue
-
-        if any(
-            segno in titolo + descrizione
-            for segno in ("<", ">", "*", "http")
-        ):
-            continue
-
-        if not canonical_id or len(canonical_id) > 180:
-            continue
-
-        if (
-            not isinstance(source_urls, list)
-            or len(_domini_fonti(source_urls)) < 2
-        ):
-            continue
+        evento.pop("_motivo_scarto", None)
 
         validi.append(
             {
@@ -912,6 +925,159 @@ def valida_eventi(eventi, giorno_mese):
     )
 
     return validi[:MASSIMO_EVENTI]
+
+
+def raccogli_scartati_validazione(eventi):
+    """Restituisce gli eventi annotati come scartati dalla validazione."""
+    scartati = []
+
+    for evento in eventi:
+        if not isinstance(evento, dict):
+            continue
+
+        motivo = str(
+            evento.get("_motivo_scarto", "")
+        ).strip()
+
+        if not motivo:
+            continue
+
+        copia = {
+            chiave: valore
+            for chiave, valore in evento.items()
+            if chiave != "_motivo_scarto"
+        }
+
+        scartati.append(
+            {
+                "phase": "validazione",
+                "reason": motivo,
+                "event": copia,
+            }
+        )
+
+    return scartati
+
+
+def carica_scartati(percorso=PERCORSO_SCARTATI):
+    if not percorso.exists():
+        return []
+
+    try:
+        dati = json.loads(
+            percorso.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Archivio scartati illeggibile: {percorso}"
+        ) from exc
+
+    eventi = (
+        dati.get("rejected", [])
+        if isinstance(dati, dict)
+        else []
+    )
+
+    if not isinstance(eventi, list):
+        raise RuntimeError(
+            "Formato archivio scartati non valido."
+        )
+
+    return [
+        voce
+        for voce in eventi
+        if isinstance(voce, dict)
+    ]
+
+
+def salva_scartati(
+    scartati,
+    registrato_il,
+    percorso=PERCORSO_SCARTATI,
+):
+    """
+    Aggiunge gli scarti all'archivio JSON.
+
+    Evita duplicati identici nello stesso giorno di registrazione.
+    """
+    if not scartati:
+        return
+
+    archivio = carica_scartati(percorso)
+    giorno = str(registrato_il)[:10]
+
+    chiavi_esistenti = {
+        (
+            str(voce.get("recorded_at", ""))[:10],
+            str(voce.get("phase", "")),
+            str(voce.get("reason", "")),
+            json.dumps(
+                voce.get("event", {}),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        for voce in archivio
+    }
+
+    aggiunti = 0
+
+    for scarto in scartati:
+        phase = str(scarto.get("phase", "")).strip()
+        reason = str(scarto.get("reason", "")).strip()
+        event = scarto.get("event", {})
+
+        if not phase or not reason or not isinstance(event, dict):
+            continue
+
+        chiave = (
+            giorno,
+            phase,
+            reason,
+            json.dumps(
+                event,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+        if chiave in chiavi_esistenti:
+            continue
+
+        archivio.append(
+            {
+                "recorded_at": registrato_il,
+                "phase": phase,
+                "reason": reason,
+                "event": event,
+            }
+        )
+        chiavi_esistenti.add(chiave)
+        aggiunti += 1
+
+    if aggiunti == 0:
+        return
+
+    percorso.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temporaneo = percorso.with_suffix(".tmp")
+    temporaneo.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "rejected": archivio,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporaneo.replace(percorso)
+
 
 
 def _normalizza(testo):
@@ -1043,12 +1209,12 @@ def scarta_gia_pubblicati(
     eventi,
     storico,
     anno_pubblicazione=None,
+    scartati=None,
 ):
     """
-    Scarta un evento solo se è già stato pubblicato nello stesso anno.
+    Scarta un evento solo se già pubblicato nello stesso anno.
 
-    Un secondo run nello stesso anno non crea duplicati.
-    Lo stesso anniversario torna pubblicabile negli anni successivi.
+    Gli scarti possono essere raccolti nella lista passata tramite `scartati`.
     """
     if anno_pubblicazione is None:
         anno_pubblicazione = datetime.now(
@@ -1056,7 +1222,6 @@ def scarta_gia_pubblicati(
         ).year
 
     nuovi = []
-
     storico_anno_corrente = [
         evento
         for evento in storico
@@ -1068,11 +1233,22 @@ def scarta_gia_pubblicati(
             eventi_equivalenti(evento, vecchio)
             for vecchio in storico_anno_corrente
         ):
-            print(
-                "Evento già pubblicato nel "
-                f"{anno_pubblicazione}, scartato: "
-                f"{evento['canonical_id']}"
+            motivo = (
+                f"evento già pubblicato nel {anno_pubblicazione}"
             )
+            print(
+                f"Evento già pubblicato nel {anno_pubblicazione}, "
+                f"scartato: {evento['canonical_id']}"
+            )
+
+            if scartati is not None:
+                scartati.append(
+                    {
+                        "phase": "storico",
+                        "reason": motivo,
+                        "event": dict(evento),
+                    }
+                )
             continue
 
         if any(
@@ -1083,11 +1259,21 @@ def scarta_gia_pubblicati(
                 "Candidato duplicato nello stesso run, scartato: "
                 f"{evento['canonical_id']}"
             )
+
+            if scartati is not None:
+                scartati.append(
+                    {
+                        "phase": "deduplicazione",
+                        "reason": "duplicato nello stesso run",
+                        "event": dict(evento),
+                    }
+                )
             continue
 
         nuovi.append(evento)
 
     return nuovi
+
 
 
 def salva_nello_storico(
@@ -1241,9 +1427,16 @@ def prepara_accadde_oggi(
         giorno_mese,
     )
 
+    scartati = raccogli_scartati_validazione(
+        verificati
+    )
+
     print(
         "Eventi che superano data, fonti e "
         f"soglia 8/10: {len(validi)}"
+    )
+    print(
+        f"Eventi scartati dalla validazione: {len(scartati)}"
     )
 
     storico = carica_storico(
@@ -1253,6 +1446,12 @@ def prepara_accadde_oggi(
         validi,
         storico,
         anno_pubblicazione=adesso.year,
+        scartati=scartati,
+    )
+
+    salva_scartati(
+        scartati,
+        adesso.isoformat(timespec="seconds"),
     )
 
     if not nuovi:
