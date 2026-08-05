@@ -927,6 +927,55 @@ def valida_eventi(eventi, giorno_mese):
     return validi[:MASSIMO_EVENTI]
 
 
+def raccogli_scartati_fact_check(candidati, verificati):
+    """Registra i candidati eliminati dal fact-check Gemini."""
+    scartati = []
+
+    for candidato in candidati:
+        if not isinstance(candidato, dict):
+            continue
+
+        trovato = False
+        for verificato in verificati:
+            if not isinstance(verificato, dict):
+                continue
+
+            campi = (
+                "event_date",
+                "year",
+                "category",
+                "competition",
+                "opponent",
+                "title",
+            )
+            firma_candidato = "|".join(
+                str(candidato.get(campo, "")).strip().lower()
+                for campo in campi
+            )
+            firma_verificato = "|".join(
+                str(verificato.get(campo, "")).strip().lower()
+                for campo in campi
+            )
+
+            if firma_candidato and firma_candidato == firma_verificato:
+                trovato = True
+                break
+
+        if not trovato:
+            scartati.append(
+                {
+                    "phase": "fact_check",
+                    "reason": (
+                        "non approvato dal fact-check: fonti, data o "
+                        "importanza non sufficienti"
+                    ),
+                    "event": dict(candidato),
+                }
+            )
+
+    return scartati
+
+
 def raccogli_scartati_validazione(eventi):
     """Restituisce gli eventi annotati come scartati dalla validazione."""
     scartati = []
@@ -1427,8 +1476,14 @@ def prepara_accadde_oggi(
         giorno_mese,
     )
 
-    scartati = raccogli_scartati_validazione(
-        verificati
+    scartati = raccogli_scartati_fact_check(
+        candidati,
+        verificati,
+    )
+    scartati.extend(
+        raccogli_scartati_validazione(
+            verificati
+        )
     )
 
     print(
@@ -1436,7 +1491,7 @@ def prepara_accadde_oggi(
         f"soglia 8/10: {len(validi)}"
     )
     print(
-        f"Eventi scartati dalla validazione: {len(scartati)}"
+        f"Eventi scartati complessivamente: {len(scartati)}"
     )
 
     storico = carica_storico(
