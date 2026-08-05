@@ -28,7 +28,16 @@ MODELLI_GEMINI_PREDEFINITI = (
 )
 
 MASSIMO_EVENTI = 3
-SOGLIA_IMPORTANZA = 9
+SOGLIA_IMPORTANZA = 8
+
+MAX_CICLI_GEMINI = max(
+    1,
+    int(os.environ.get("MAX_CICLI_GEMINI", "3")),
+)
+ATTESA_503_GEMINI = max(
+    1,
+    int(os.environ.get("ATTESA_503_GEMINI", "20")),
+)
 
 PERCORSO_STORICO = Path(
     os.environ.get(
@@ -41,14 +50,22 @@ CATEGORIE_AMMESSE = {
     "TROFEO",
     "SCUDETTO",
     "PARTITA_ICONICA",
+    "PARTITA_MEMORABILE",
     "RECORD_STORICO",
+    "DEBUTTO_ICONICO",
+    "TRAGUARDO_STORICO",
+    "ACQUISTO_ICONICO",
 }
 
 ESITO_RICHIESTO_PER_CATEGORIA = {
     "TROFEO": "TROFEO_CONQUISTATO",
     "SCUDETTO": "SCUDETTO_CONQUISTATO",
     "PARTITA_ICONICA": "VITTORIA",
+    "PARTITA_MEMORABILE": "VITTORIA",
     "RECORD_STORICO": "RECORD_POSITIVO",
+    "DEBUTTO_ICONICO": "DEBUTTO",
+    "TRAGUARDO_STORICO": "TRAGUARDO_RAGGIUNTO",
+    "ACQUISTO_ICONICO": "ACQUISTO_UFFICIALE",
 }
 
 STOPWORD_IDENTITA = {
@@ -79,6 +96,20 @@ STOPWORD_IDENTITA = {
 class Rubrica:
     testo: str
     eventi: list[dict]
+
+
+class GeminiNonDisponibileError(RuntimeError):
+    """Errore finale Gemini con riepilogo dei tentativi effettuati."""
+
+    def __init__(self, messaggio, tentativi=None):
+        super().__init__(messaggio)
+        self.tentativi = list(tentativi or [])
+
+
+MOSTRA_TRACEBACK = os.environ.get(
+    "MOSTRA_TRACEBACK",
+    "false",
+).lower() in {"1", "true", "yes"}
 
 
 def modelli_gemini_configurati():
@@ -155,41 +186,63 @@ def converti_anno_in_emoji(anno):
 
 
 def _testo_errore(exc):
-    return str(exc).lower()
+    return str(exc)
 
 
-def _quota_definitivamente_esaurita(exc):
-    """
-    Riconosce una quota realmente esaurita.
+def _secondi_attesa_gemini(messaggio):
+    """Ricava il retry delay suggerito dall'errore Gemini."""
+    for pattern in (
+        r"Please retry in\s+([0-9.]+)s",
+        r"['\"]retryDelay['\"]\s*:\s*['\"]([0-9.]+)s",
+    ):
+        match = re.search(
+            pattern,
+            messaggio,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return min(
+                max(int(float(match.group(1))) + 2, 2),
+                60,
+            )
+    return 30
 
-    In questo caso non serve cambiare modello, perché tutti i modelli
-    usano la stessa API key e lo stesso progetto Google.
-    """
-    errore = _testo_errore(exc)
 
-    indicatori = (
-        "you exceeded your current quota",
-        "exceeded your current quota",
-        "check your plan and billing",
-        "quota exceeded",
-        "quota_exceeded",
-        "billing details",
+def _quota_giornaliera_modello(messaggio):
+    return bool(
+        re.search(
+            r"GenerateRequestsPerDay|requests? per day|daily quota",
+            messaggio,
+            flags=re.IGNORECASE,
+        )
     )
 
+
+def _errore_quota(messaggio):
     return (
-        "resource_exhausted" in errore
-        and any(indicatore in errore for indicatore in indicatori)
+        "429" in messaggio
+        or "RESOURCE_EXHAUSTED" in messaggio.upper()
     )
 
 
-def _modello_non_disponibile(exc):
-    """
-    Riconosce un modello inesistente, ritirato o non supportato.
+def _errore_temporaneo(messaggio):
+    testo = messaggio.lower()
+    return (
+        "500" in messaggio
+        or "502" in messaggio
+        or "503" in messaggio
+        or "504" in messaggio
+        or "unavailable" in testo
+        or "overloaded" in testo
+        or "deadline_exceeded" in testo
+        or "timed out" in testo
+        or "timeout" in testo
+        or "connection reset" in testo
+    )
 
-    Solo in questi casi si passa al modello successivo.
-    """
-    errore = _testo_errore(exc)
 
+def _modello_non_disponibile(messaggio):
+    testo = messaggio.lower()
     indicatori = (
         "404",
         "410",
@@ -200,87 +253,48 @@ def _modello_non_disponibile(exc):
         "not supported",
         "shut down",
     )
-
-    return any(indicatore in errore for indicatore in indicatori)
-
-
-def _errore_temporaneo(exc):
-    """
-    Riconosce un errore momentaneo.
-
-    Un 429 con messaggio esplicito di quota esaurita non viene ritentato.
-    """
-    if _quota_definitivamente_esaurita(exc):
-        return False
-
-    if _modello_non_disponibile(exc):
-        return False
-
-    errore = _testo_errore(exc)
-
-    indicatori = (
-        "429",
-        "resource_exhausted",
-        "500",
-        "502",
-        "503",
-        "504",
-        "unavailable",
-        "deadline_exceeded",
-        "connection reset",
-        "timed out",
-        "timeout",
-    )
-
-    return any(indicatore in errore for indicatore in indicatori)
+    return any(indicatore in testo for indicatore in indicatori)
 
 
-def chiama_gemini_con_retry(
-    client,
-    model,
-    prompt,
-    config,
-    max_retries=3,
-):
-    """Chiama un modello e riprova solo gli errori temporanei."""
-    if max_retries < 1:
-        raise ValueError("max_retries deve essere almeno 1.")
+def _descrizione_breve_errore(messaggio):
+    """Restituisce una descrizione corta e leggibile per i log."""
+    testo = messaggio.lower()
 
-    for attempt in range(max_retries):
-        try:
-            return client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            )
+    if _quota_giornaliera_modello(messaggio):
+        return "429 quota giornaliera esaurita"
+    if _errore_quota(messaggio):
+        return "429 quota/rate limit"
+    if _modello_non_disponibile(messaggio):
+        return "modello non disponibile"
+    if "503" in messaggio or "unavailable" in testo or "overloaded" in testo:
+        return "503 servizio temporaneamente non disponibile"
+    if "timeout" in testo or "timed out" in testo:
+        return "timeout"
+    if "401" in messaggio or "unauthenticated" in testo:
+        return "401 chiave API non valida"
+    if "403" in messaggio or "permission_denied" in testo:
+        return "403 permesso negato"
 
-        except Exception as exc:
-            if _quota_definitivamente_esaurita(exc):
-                raise RuntimeError(
-                    "Quota Gemini esaurita o non disponibile per questa API key. "
-                    "Il problema riguarda il progetto Google, non il singolo "
-                    "modello. Controlla quota, piano e fatturazione."
-                ) from exc
+    prima_riga = messaggio.strip().splitlines()[0] if messaggio.strip() else "errore sconosciuto"
+    return prima_riga[:140]
 
-            ultimo_tentativo = attempt == max_retries - 1
 
-            if not _errore_temporaneo(exc) or ultimo_tentativo:
-                raise
+def _stampa_riepilogo_gemini(tentativi):
+    """Stampa un riepilogo compatto di tutti i tentativi Gemini."""
+    print()
+    print("=" * 64)
+    print("RIEPILOGO GEMINI")
+    print("=" * 64)
 
-            attesa = min(
-                12,
-                (2**attempt) + random.uniform(0, 1),
-            )
+    if not tentativi:
+        print("Nessun tentativo registrato.")
+        return
 
-            print(
-                f"Errore temporaneo con {model}. "
-                f"Tentativo {attempt + 1}/{max_retries} fallito. "
-                f"Riprovo tra {attesa:.1f}s..."
-            )
-
-            time.sleep(attesa)
-
-    raise RuntimeError("Gemini non disponibile.")
+    for voce in tentativi:
+        ciclo = voce["ciclo"]
+        modello = voce["modello"]
+        esito = voce["esito"]
+        print(f"Ciclo {ciclo}: {modello} -> {esito}")
 
 
 def chiama_gemini_con_fallback(
@@ -288,62 +302,122 @@ def chiama_gemini_con_fallback(
     models,
     prompt,
     config,
-    max_retries=3,
+    max_retries=None,
 ):
     """
-    Prova più modelli in ordine.
+    Su 429 o 503 prova il modello successivo, poi ripete la catena.
 
-    Passa al modello successivo solo se il precedente non esiste,
-    è stato ritirato oppure non è supportato.
+    I log restano sintetici e l'errore finale contiene il riepilogo completo,
+    senza costringere GitHub Actions a mostrare un traceback chilometrico.
     """
     modelli = tuple(models)
 
     if not modelli:
-        raise RuntimeError("Nessun modello Gemini configurato.")
+        raise GeminiNonDisponibileError(
+            "Nessun modello Gemini configurato."
+        )
+
+    cicli = (
+        MAX_CICLI_GEMINI
+        if max_retries is None
+        else max(1, int(max_retries))
+    )
 
     ultimo_errore = None
+    tentativi = []
+    modelli_con_quota_giornaliera_esaurita = set()
 
-    for indice, modello in enumerate(modelli):
-        try:
-            risposta = chiama_gemini_con_retry(
-                client=client,
-                model=modello,
-                prompt=prompt,
-                config=config,
-                max_retries=max_retries,
-            )
+    for ciclo in range(1, cicli + 1):
+        print()
+        print(f"[Gemini] Ciclo {ciclo}/{cicli}")
+        attesa_ciclo = None
+        modelli_tentati = 0
 
-            print(
-                f"Risposta ottenuta con il modello Gemini: {modello}"
-            )
-            return risposta
+        for modello in modelli:
+            if modello in modelli_con_quota_giornaliera_esaurita:
+                print(f"  - {modello}: saltato, quota giornaliera esaurita")
+                continue
 
-        except Exception as exc:
-            ultimo_errore = exc
-            testo_errore = _testo_errore(exc)
+            modelli_tentati += 1
 
-            if (
-                _quota_definitivamente_esaurita(exc)
-                or "quota gemini esaurita" in testo_errore
-            ):
-                raise
-
-            if not _modello_non_disponibile(exc):
-                raise
-
-            if indice < len(modelli) - 1:
-                successivo = modelli[indice + 1]
-                print(
-                    f"Modello Gemini non disponibile: {modello}. "
-                    f"Passo al fallback: {successivo}."
+            try:
+                print(f"  - {modello}: richiesta in corso...", flush=True)
+                risposta = client.models.generate_content(
+                    model=modello,
+                    contents=prompt,
+                    config=config,
                 )
 
-    if ultimo_errore is not None:
-        raise ultimo_errore
+                tentativi.append(
+                    {
+                        "ciclo": ciclo,
+                        "modello": modello,
+                        "esito": "OK",
+                    }
+                )
+                print(f"  - {modello}: OK")
+                return risposta
 
-    raise RuntimeError(
-        "Nessun modello Gemini configurato è disponibile."
-    )
+            except Exception as exc:
+                ultimo_errore = exc
+                messaggio = _testo_errore(exc)
+                descrizione = _descrizione_breve_errore(messaggio)
+                tentativi.append(
+                    {
+                        "ciclo": ciclo,
+                        "modello": modello,
+                        "esito": descrizione,
+                    }
+                )
+                print(f"  - {modello}: {descrizione}")
+
+                if _modello_non_disponibile(messaggio):
+                    continue
+
+                if _errore_quota(messaggio):
+                    if _quota_giornaliera_modello(messaggio):
+                        modelli_con_quota_giornaliera_esaurita.add(modello)
+                        continue
+
+                    attesa_quota = _secondi_attesa_gemini(messaggio)
+                    attesa_ciclo = max(attesa_ciclo or 0, attesa_quota)
+                    continue
+
+                if _errore_temporaneo(messaggio):
+                    attesa_503 = min(
+                        ATTESA_503_GEMINI * (2 ** (ciclo - 1)),
+                        60,
+                    )
+                    attesa_ciclo = max(attesa_ciclo or 0, attesa_503)
+                    continue
+
+                _stampa_riepilogo_gemini(tentativi)
+                raise GeminiNonDisponibileError(
+                    f"Errore Gemini non recuperabile: {descrizione}",
+                    tentativi,
+                ) from exc
+
+        if ciclo >= cicli or modelli_tentati == 0:
+            break
+
+        if attesa_ciclo is None:
+            break
+
+        print(f"[Gemini] Attendo {attesa_ciclo}s prima del prossimo ciclo...")
+        time.sleep(attesa_ciclo)
+
+    _stampa_riepilogo_gemini(tentativi)
+
+    if ultimo_errore is None:
+        raise GeminiNonDisponibileError(
+            "Nessun modello Gemini configurato è disponibile.",
+            tentativi,
+        )
+
+    raise GeminiNonDisponibileError(
+        "Gemini non disponibile dopo tutti i tentativi configurati.",
+        tentativi,
+    ) from ultimo_errore
 
 
 def estrai_json(testo):
@@ -392,44 +466,53 @@ def scopri_candidati(
     data_italiana,
     models=None,
 ):
-    """Prima passata: trova eventi juventini di eccezionale rilievo."""
+    """Prima passata: trova eventi juventini con importanza almeno 8/10."""
     istruzioni = """
 Sei un ricercatore di storia della Juventus. Devi proporre candidati, non
-scrivere un post. Usa Google Search e sii estremamente selettivo.
+scrivere un post. Usa Google Search e sii molto selettivo.
 
-Considera esclusivamente la prima squadra maschile e soltanto fatti avvenuti
-esattamente nella data chiesta.
+Considera esclusivamente la prima squadra maschile e fatti avvenuti
+esattamente nella data richiesta.
 
-Un evento è candidabile solo se appartiene a uno di questi casi:
-1. conquista di un trofeo ufficiale o certezza matematica di uno Scudetto;
-2. partita universalmente ricordata come una delle più iconiche della storia
-   del club, come una finale, un'impresa europea o una rimonta eccezionale;
-3. record positivo di squadra di importanza nazionale o europea, storico e
-   ampiamente riconosciuto.
+Sono candidabili:
+1. trofei ufficiali e Scudetti matematicamente conquistati;
+2. partite iconiche o memorabili, finali, rimonte, imprese europee e vittorie
+   ancora oggi ricordate come capitoli importanti della storia juventina;
+3. record storici positivi di squadra;
+4. debutti davvero iconici di campioni o simboli del club;
+5. traguardi individuali eccezionali e storicamente rilevanti;
+6. acquisti ufficiali realmente epocali o iconici, tra i più importanti
+   della storia del club.
 
-Usa come riferimento Juventus-Atletico Madrid 3-0 del 12 marzo 2019: una
-rimonta europea di quel peso è una PARTITA_ICONICA. Un normale big match,
-anche se vinto nettamente, non raggiunge automaticamente quella soglia.
+Per ACQUISTO_ICONICO usa soltanto la data dell'annuncio ufficiale Juventus.
+Non usare indiscrezioni, accordi verbali, arrivi in aeroporto, visite
+mediche, presentazioni o primi allenamenti. Non basta che il giocatore fosse
+costoso o titolare: l'operazione deve essere ancora oggi riconosciuta come
+una delle più importanti o simboliche della storia juventina.
 
-Scarta senza eccezioni: normali vittorie di campionato o coppa, amichevoli,
-compleanni, nascite, morti, acquisti, cessioni, rinnovi, presentazioni,
-esordi, singoli gol, presenze, record individuali, anniversari, sorteggi,
-premiazioni, sconfitte, eliminazioni, eventi negativi, Women, Next Gen,
-Primavera e giovanili.
+Benchmark:
+- Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è PARTITA_ICONICA;
+- un normale big match non è automaticamente memorabile;
+- un semplice esordio, una centesima presenza o un acquisto ordinario non
+  raggiungono la soglia.
 
-Quando il rilievo o la data non sono certi, non proporre l'evento. È
-preferibile restituire zero eventi invece di riempire il post.
+Scarta: normali vittorie, amichevoli, compleanni, nascite, morti, cessioni,
+rinnovi, semplici presentazioni, singoli gol ordinari, ricorrenze minori,
+sorteggi, premiazioni, sconfitte, eliminazioni, eventi negativi, Women,
+Next Gen, Primavera e giovanili.
 
-Rispondi esclusivamente con JSON valido, senza Markdown:
+È meglio restituire zero eventi che forzare candidati deboli.
+
+Rispondi esclusivamente con JSON valido:
 {
   "events": [
     {
       "event_date": "YYYY-MM-DD",
       "year": 1234,
       "category": "categoria ammessa",
-      "outcome": "esito positivo ammesso",
-      "competition": "competizione o record",
-      "opponent": "avversario oppure stringa vuota",
+      "outcome": "esito ammesso",
+      "competition": "competizione, record o contesto",
+      "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo breve",
       "description": "una frase fattuale breve",
       "reason": "motivo del rilievo storico"
@@ -437,33 +520,30 @@ Rispondi esclusivamente con JSON valido, senza Markdown:
   ]
 }
 
-Inserisci al massimo 5 candidati.
+Inserisci al massimo 8 candidati.
 
-Categorie consentite:
-TROFEO, SCUDETTO, PARTITA_ICONICA, RECORD_STORICO.
+Categorie:
+TROFEO, SCUDETTO, PARTITA_ICONICA, PARTITA_MEMORABILE, RECORD_STORICO,
+DEBUTTO_ICONICO, TRAGUARDO_STORICO, ACQUISTO_ICONICO.
 
-Outcome consentiti:
-TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO.
+Outcome:
+TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
+DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
 """
-
     prompt = (
-        f"Cerca eventi juventini di importanza eccezionale avvenuti il "
-        f"{data_italiana} di un qualsiasi anno storico. Giorno e mese "
+        f"Cerca eventi juventini con importanza potenziale almeno 8/10 "
+        f"avvenuti il {data_italiana} di qualsiasi anno. Giorno e mese "
         f"devono essere {giorno_mese}; event_date deve contenere l'anno "
-        "reale dell'evento. Non includere eventi solo vagamente "
-        "interessanti e non cambiare giorno per farli rientrare."
+        "reale. Non cambiare data e non riempire la lista con eventi ordinari."
     )
-
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
         config=_config_con_ricerca(istruzioni),
     )
-
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
-
     return eventi if isinstance(eventi, list) else []
 
 
@@ -474,34 +554,42 @@ def verifica_candidati(
     data_italiana,
     models=None,
 ):
-    """Seconda passata: verifica data, fonti e importanza."""
+    """Seconda passata: verifica data, fonti, categoria e importanza."""
     if not candidati:
         return []
 
     istruzioni = """
-Sei il fact-checker finale di una rubrica Juventus. Non fidarti della lista
-ricevuta: verifica ogni candidato da zero con Google Search.
+Sei il fact-checker finale di una rubrica Juventus. Verifica ogni candidato
+da zero con Google Search.
 
-Approva un evento soltanto se:
-- almeno due fonti web affidabili e indipendenti confermano lo stesso fatto;
-- le fonti confermano giorno, mese e anno esatti;
-- riguarda la prima squadra maschile della Juventus;
-- non è una sconfitta, eliminazione o evento negativo;
-- raggiunge almeno 9/10.
+Approva soltanto se:
+- almeno due fonti web affidabili e indipendenti confermano il fatto;
+- giorno, mese e anno sono esatti;
+- riguarda la prima squadra maschile;
+- è positivo o celebrativo;
+- merita davvero 8, 9 o 10.
 
-Scala:
-10 = conquista di Champions/Coppa dei Campioni oppure una delle imprese o
-dei record di squadra più celebri e indiscutibili della storia del club.
-9 = conquista di un altro trofeo ufficiale, Scudetto matematico, impresa
-universalmente iconica o record storico di squadra nazionale/europeo.
-8 o meno = normale vittoria, big match, turno preliminare, traguardo
-individuale o curiosità. Questi eventi vanno scartati.
+Scala editoriale:
+10 = evento epocale: Champions/Coppa dei Campioni, Scudetto, impresa
+leggendaria o acquisto tra i più clamorosi nella storia del calcio.
+9 = grande trofeo, impresa universalmente iconica, record storico enorme,
+debutto o traguardo di un simbolo assoluto, acquisto di un fuoriclasse con
+enorme risonanza e impatto storico.
+8 = evento ancora oggi molto interessante per un tifoso juventino: partita
+memorabile, debutto iconico, traguardo eccezionale o acquisto simbolico e
+storicamente rilevante. Deve essere chiaramente sopra una normale ricorrenza.
+7 o meno = normale vittoria, curiosità, semplice debutto, primo gol,
+centesima presenza ordinaria, operazione di mercato normale o giocatore
+costoso ma non storico. Va scartato.
+
+Per ACQUISTO_ICONICO:
+- usa soltanto la data dell'annuncio ufficiale Juventus;
+- non approvare indiscrezioni, visite mediche, aeroporto o presentazione;
+- non basta il prezzo;
+- assegna 8+ solo a operazioni considerate ancora oggi davvero iconiche.
 
 Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è il benchmark di una
-PARTITA_ICONICA che raggiunge la soglia.
-
-Non promuovere eventi solo per arrivare a un certo numero. Zero eventi è un
-risultato corretto.
+PARTITA_ICONICA. Non promuovere eventi solo per arrivare a tre.
 
 Rispondi esclusivamente con JSON valido:
 {
@@ -510,13 +598,13 @@ Rispondi esclusivamente con JSON valido:
       "event_date": "YYYY-MM-DD",
       "year": 1234,
       "category": "categoria ammessa",
-      "outcome": "esito positivo ammesso",
-      "importance": 9,
-      "competition": "competizione o record",
-      "opponent": "avversario o stringa vuota",
+      "outcome": "esito ammesso",
+      "importance": 8,
+      "competition": "competizione, record o contesto",
+      "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo da due a cinque parole",
       "description": "una sola frase fattuale breve",
-      "canonical_id": "ANNO|CATEGORIA|COMPETIZIONE|AVVERSARIO",
+      "canonical_id": "ANNO|CATEGORIA|CONTESTO|SOGGETTO",
       "source_urls": [
         "https://fonte1.example/",
         "https://fonte2.example/"
@@ -525,29 +613,32 @@ Rispondi esclusivamente con JSON valido:
   ]
 }
 
-Il titolo deve contenere da 2 a 5 parole. La descrizione deve contenere una
-sola frase, massimo 240 caratteri, senza HTML, Markdown o URL.
+Categorie:
+TROFEO, SCUDETTO, PARTITA_ICONICA, PARTITA_MEMORABILE, RECORD_STORICO,
+DEBUTTO_ICONICO, TRAGUARDO_STORICO, ACQUISTO_ICONICO.
 
-Restituisci al massimo 3 eventi, dal più vecchio al più recente.
+Outcome:
+TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
+DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
+
+Titolo: 2-5 parole. Descrizione: una frase, massimo 240 caratteri, senza
+HTML, Markdown o URL. Restituisci tutti gli eventi validi 8-10, fino a un
+massimo di 8; il codice sceglierà i migliori tre.
 """
-
     prompt = (
-        f"La ricorrenza richiesta è il {data_italiana}, giorno e mese "
-        f"{giorno_mese}, in qualsiasi anno storico. Verifica rigorosamente "
-        "questi candidati e usa in event_date l'anno reale del fatto:\n"
+        f"La ricorrenza è il {data_italiana}, giorno e mese {giorno_mese}. "
+        "Verifica rigorosamente questi candidati, assegna importanza 8-10 "
+        "solo quando meritata e usa l'anno reale in event_date:\n"
         f"{json.dumps(candidati, ensure_ascii=False)}"
     )
-
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
         config=_config_con_ricerca(istruzioni),
     )
-
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
-
     return eventi if isinstance(eventi, list) else []
 
 
@@ -678,8 +769,9 @@ def valida_eventi(eventi, giorno_mese):
 
     validi.sort(
         key=lambda voce: (
-            voce["year"],
             -voce["importance"],
+            voce["year"],
+            voce["canonical_id"],
         )
     )
 
@@ -793,16 +885,56 @@ def carica_storico(percorso=PERCORSO_STORICO):
     ]
 
 
-def scarta_gia_pubblicati(eventi, storico):
+def _anno_pubblicazione(evento):
+    """Ricava l'anno in cui un evento è stato pubblicato."""
+    published_at = str(evento.get("published_at", "")).strip()
+
+    if not published_at:
+        return None
+
+    corrispondenza = re.match(r"^(\d{4})", published_at)
+
+    if not corrispondenza:
+        return None
+
+    try:
+        return int(corrispondenza.group(1))
+    except ValueError:
+        return None
+
+
+def scarta_gia_pubblicati(
+    eventi,
+    storico,
+    anno_pubblicazione=None,
+):
+    """
+    Scarta un evento solo se è già stato pubblicato nello stesso anno.
+
+    Un secondo run nello stesso anno non crea duplicati.
+    Lo stesso anniversario torna pubblicabile negli anni successivi.
+    """
+    if anno_pubblicazione is None:
+        anno_pubblicazione = datetime.now(
+            FUSO_ORARIO
+        ).year
+
     nuovi = []
+
+    storico_anno_corrente = [
+        evento
+        for evento in storico
+        if _anno_pubblicazione(evento) == anno_pubblicazione
+    ]
 
     for evento in eventi:
         if any(
             eventi_equivalenti(evento, vecchio)
-            for vecchio in storico
+            for vecchio in storico_anno_corrente
         ):
             print(
-                "Evento già pubblicato, scartato: "
+                "Evento già pubblicato nel "
+                f"{anno_pubblicazione}, scartato: "
                 f"{evento['canonical_id']}"
             )
             continue
@@ -812,7 +944,7 @@ def scarta_gia_pubblicati(eventi, storico):
             for altro in nuovi
         ):
             print(
-                "Candidato duplicato, scartato: "
+                "Candidato duplicato nello stesso run, scartato: "
                 f"{evento['canonical_id']}"
             )
             continue
@@ -975,7 +1107,7 @@ def prepara_accadde_oggi(
 
     print(
         "Eventi che superano data, fonti e "
-        f"soglia 9/10: {len(validi)}"
+        f"soglia 8/10: {len(validi)}"
     )
 
     storico = carica_storico(
@@ -984,6 +1116,7 @@ def prepara_accadde_oggi(
     nuovi = scarta_gia_pubblicati(
         validi,
         storico,
+        anno_pubblicazione=adesso.year,
     )
 
     if not nuovi:
@@ -1090,5 +1223,34 @@ def main():
     )
 
 
+def _stampa_esito_senza_invio(exc):
+    """Chiude il job senza errore quando Gemini non è utilizzabile."""
+    print()
+    print("=" * 64)
+    print("ESITO FINALE: NESSUN INVIO")
+    print("=" * 64)
+    print(f"Motivo: {exc}")
+    print("Telegram: nessun messaggio inviato.")
+    print("Storico: invariato.")
+    print("Workflow: completato senza errore; verrà ritentato al prossimo avvio.")
+    print("=" * 64)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except GeminiNonDisponibileError as exc:
+        _stampa_esito_senza_invio(exc)
+        raise SystemExit(0)
+    except Exception as exc:
+        print()
+        print("=" * 64)
+        print("ESITO FINALE: ERRORE REALE")
+        print("=" * 64)
+        print(f"Causa: {exc}")
+        print("Telegram: stato non confermato.")
+        print("Storico: controllare il log precedente.")
+        print("=" * 64)
+        if MOSTRA_TRACEBACK:
+            raise
+        raise SystemExit(1)
