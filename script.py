@@ -23,7 +23,7 @@ FUSO_ORARIO = ZoneInfo("Europe/Rome")
 
 MODELLI_GEMINI_PREDEFINITI = (
     "gemini-3.6-flash",
-    "gemini-3.5-flash",
+    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
 )
 
@@ -37,6 +37,16 @@ MAX_CICLI_GEMINI = max(
 ATTESA_503_GEMINI = max(
     1,
     int(os.environ.get("ATTESA_503_GEMINI", "20")),
+)
+
+SERPER_ENDPOINT = "https://google.serper.dev/search"
+SERPER_NUM_RISULTATI = max(
+    5,
+    min(20, int(os.environ.get("SERPER_NUM_RISULTATI", "10"))),
+)
+SERPER_TIMEOUT = max(
+    5,
+    int(os.environ.get("SERPER_TIMEOUT", "20")),
 )
 
 PERCORSO_STORICO = Path(
@@ -96,20 +106,6 @@ STOPWORD_IDENTITA = {
 class Rubrica:
     testo: str
     eventi: list[dict]
-
-
-class GeminiNonDisponibileError(RuntimeError):
-    """Errore finale Gemini con riepilogo dei tentativi effettuati."""
-
-    def __init__(self, messaggio, tentativi=None):
-        super().__init__(messaggio)
-        self.tentativi = list(tentativi or [])
-
-
-MOSTRA_TRACEBACK = os.environ.get(
-    "MOSTRA_TRACEBACK",
-    "false",
-).lower() in {"1", "true", "yes"}
 
 
 def modelli_gemini_configurati():
@@ -256,47 +252,6 @@ def _modello_non_disponibile(messaggio):
     return any(indicatore in testo for indicatore in indicatori)
 
 
-def _descrizione_breve_errore(messaggio):
-    """Restituisce una descrizione corta e leggibile per i log."""
-    testo = messaggio.lower()
-
-    if _quota_giornaliera_modello(messaggio):
-        return "429 quota giornaliera esaurita"
-    if _errore_quota(messaggio):
-        return "429 quota/rate limit"
-    if _modello_non_disponibile(messaggio):
-        return "modello non disponibile"
-    if "503" in messaggio or "unavailable" in testo or "overloaded" in testo:
-        return "503 servizio temporaneamente non disponibile"
-    if "timeout" in testo or "timed out" in testo:
-        return "timeout"
-    if "401" in messaggio or "unauthenticated" in testo:
-        return "401 chiave API non valida"
-    if "403" in messaggio or "permission_denied" in testo:
-        return "403 permesso negato"
-
-    prima_riga = messaggio.strip().splitlines()[0] if messaggio.strip() else "errore sconosciuto"
-    return prima_riga[:140]
-
-
-def _stampa_riepilogo_gemini(tentativi):
-    """Stampa un riepilogo compatto di tutti i tentativi Gemini."""
-    print()
-    print("=" * 64)
-    print("RIEPILOGO GEMINI")
-    print("=" * 64)
-
-    if not tentativi:
-        print("Nessun tentativo registrato.")
-        return
-
-    for voce in tentativi:
-        ciclo = voce["ciclo"]
-        modello = voce["modello"]
-        esito = voce["esito"]
-        print(f"Ciclo {ciclo}: {modello} -> {esito}")
-
-
 def chiama_gemini_con_fallback(
     client,
     models,
@@ -305,17 +260,15 @@ def chiama_gemini_con_fallback(
     max_retries=None,
 ):
     """
-    Su 429 o 503 prova il modello successivo, poi ripete la catena.
+    Strategia uguale al bot Notizie.
 
-    I log restano sintetici e l'errore finale contiene il riepilogo completo,
-    senza costringere GitHub Actions a mostrare un traceback chilometrico.
+    Su 429 o 503 prova il modello successivo. Dopo aver tentato tutti i
+    modelli, attende e ripete l'intera catena.
     """
     modelli = tuple(models)
 
     if not modelli:
-        raise GeminiNonDisponibileError(
-            "Nessun modello Gemini configurato."
-        )
+        raise RuntimeError("Nessun modello Gemini configurato.")
 
     cicli = (
         MAX_CICLI_GEMINI
@@ -324,63 +277,69 @@ def chiama_gemini_con_fallback(
     )
 
     ultimo_errore = None
-    tentativi = []
     modelli_con_quota_giornaliera_esaurita = set()
 
     for ciclo in range(1, cicli + 1):
-        print()
-        print(f"[Gemini] Ciclo {ciclo}/{cicli}")
         attesa_ciclo = None
         modelli_tentati = 0
 
         for modello in modelli:
             if modello in modelli_con_quota_giornaliera_esaurita:
-                print(f"  - {modello}: saltato, quota giornaliera esaurita")
                 continue
 
             modelli_tentati += 1
 
             try:
-                print(f"  - {modello}: richiesta in corso...", flush=True)
+                print(
+                    f"Tentativo con il modello {modello} "
+                    f"(ciclo {ciclo}/{cicli})..."
+                )
+
                 risposta = client.models.generate_content(
                     model=modello,
                     contents=prompt,
                     config=config,
                 )
 
-                tentativi.append(
-                    {
-                        "ciclo": ciclo,
-                        "modello": modello,
-                        "esito": "OK",
-                    }
+                print(
+                    f"Risposta ottenuta con il modello Gemini: {modello}"
                 )
-                print(f"  - {modello}: OK")
                 return risposta
 
             except Exception as exc:
                 ultimo_errore = exc
                 messaggio = _testo_errore(exc)
-                descrizione = _descrizione_breve_errore(messaggio)
-                tentativi.append(
-                    {
-                        "ciclo": ciclo,
-                        "modello": modello,
-                        "esito": descrizione,
-                    }
-                )
-                print(f"  - {modello}: {descrizione}")
 
                 if _modello_non_disponibile(messaggio):
+                    print(
+                        f"Modello Gemini non disponibile: {modello}. "
+                        "Provo il modello successivo..."
+                    )
                     continue
 
                 if _errore_quota(messaggio):
                     if _quota_giornaliera_modello(messaggio):
-                        modelli_con_quota_giornaliera_esaurita.add(modello)
+                        modelli_con_quota_giornaliera_esaurita.add(
+                            modello
+                        )
+                        print(
+                            f"{modello}: quota giornaliera esaurita. "
+                            "Lo escludo dai prossimi cicli..."
+                        )
                         continue
 
-                    attesa_quota = _secondi_attesa_gemini(messaggio)
-                    attesa_ciclo = max(attesa_ciclo or 0, attesa_quota)
+                    attesa_quota = _secondi_attesa_gemini(
+                        messaggio
+                    )
+                    attesa_ciclo = max(
+                        attesa_ciclo or 0,
+                        attesa_quota,
+                    )
+
+                    print(
+                        f"Quota temporanea per {modello}. "
+                        "Provo il modello successivo..."
+                    )
                     continue
 
                 if _errore_temporaneo(messaggio):
@@ -388,14 +347,18 @@ def chiama_gemini_con_fallback(
                         ATTESA_503_GEMINI * (2 ** (ciclo - 1)),
                         60,
                     )
-                    attesa_ciclo = max(attesa_ciclo or 0, attesa_503)
+                    attesa_ciclo = max(
+                        attesa_ciclo or 0,
+                        attesa_503,
+                    )
+
+                    print(
+                        f"Modello {modello} temporaneamente non disponibile. "
+                        "Provo il modello successivo..."
+                    )
                     continue
 
-                _stampa_riepilogo_gemini(tentativi)
-                raise GeminiNonDisponibileError(
-                    f"Errore Gemini non recuperabile: {descrizione}",
-                    tentativi,
-                ) from exc
+                raise
 
         if ciclo >= cicli or modelli_tentati == 0:
             break
@@ -403,21 +366,18 @@ def chiama_gemini_con_fallback(
         if attesa_ciclo is None:
             break
 
-        print(f"[Gemini] Attendo {attesa_ciclo}s prima del prossimo ciclo...")
+        print(
+            "Tutti i modelli disponibili sono temporaneamente occupati. "
+            f"Attendo {attesa_ciclo}s prima del ciclo successivo..."
+        )
         time.sleep(attesa_ciclo)
 
-    _stampa_riepilogo_gemini(tentativi)
-
     if ultimo_errore is None:
-        raise GeminiNonDisponibileError(
-            "Nessun modello Gemini configurato è disponibile.",
-            tentativi,
+        raise RuntimeError(
+            "Nessun modello Gemini configurato è disponibile."
         )
 
-    raise GeminiNonDisponibileError(
-        "Gemini non disponibile dopo tutti i tentativi configurati.",
-        tentativi,
-    ) from ultimo_errore
+    raise ultimo_errore
 
 
 def estrai_json(testo):
@@ -449,15 +409,180 @@ def estrai_json(testo):
     return valore
 
 
-def _config_con_ricerca(system_instruction):
+def _config_senza_ricerca(system_instruction):
+    """
+    Configurazione Gemini senza Google Search integrato.
+
+    La ricerca viene eseguita separatamente tramite Serper e i risultati
+    vengono passati al modello come testo strutturato.
+    """
     return types.GenerateContentConfig(
         system_instruction=system_instruction,
-        tools=[
-            types.Tool(
-                google_search=types.GoogleSearch()
-            )
-        ],
+        temperature=0,
+        response_mime_type="application/json",
     )
+
+
+def _richiesta_serper(query, num=None):
+    """Esegue una ricerca Serper e restituisce i risultati organici."""
+    api_key = os.environ.get("SERPER_API_KEY", "").strip()
+
+    if not api_key:
+        raise RuntimeError(
+            "Manca SERPER_API_KEY nei GitHub Secrets."
+        )
+
+    payload = json.dumps(
+        {
+            "q": query,
+            "gl": "it",
+            "hl": "it",
+            "num": num or SERPER_NUM_RISULTATI,
+        }
+    ).encode("utf-8")
+
+    richiesta = urllib.request.Request(
+        SERPER_ENDPOINT,
+        data=payload,
+        headers={
+            "X-API-KEY": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            richiesta,
+            timeout=SERPER_TIMEOUT,
+        ) as risposta:
+            dati = json.loads(
+                risposta.read().decode("utf-8")
+            )
+    except urllib.error.HTTPError as exc:
+        corpo = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+        raise RuntimeError(
+            f"Serper HTTP {exc.code}: {corpo[:500]}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Serper non raggiungibile: {exc.reason}"
+        ) from exc
+
+    organici = dati.get("organic", [])
+
+    if not isinstance(organici, list):
+        return []
+
+    risultati = []
+
+    for posizione, voce in enumerate(organici, start=1):
+        if not isinstance(voce, dict):
+            continue
+
+        titolo = str(voce.get("title", "")).strip()
+        link = str(voce.get("link", "")).strip()
+        snippet = str(voce.get("snippet", "")).strip()
+        data = str(voce.get("date", "")).strip()
+
+        if not titolo or not link:
+            continue
+
+        risultati.append(
+            {
+                "position": posizione,
+                "title": titolo,
+                "link": link,
+                "snippet": snippet,
+                "date": data,
+            }
+        )
+
+    return risultati
+
+
+def _cerca_fonti(queries):
+    """
+    Esegue più ricerche, elimina URL duplicati e produce un corpus compatto.
+    """
+    corpus = []
+    url_visti = set()
+
+    for indice, query in enumerate(queries, start=1):
+        print(
+            f"[Ricerca] {indice}/{len(queries)}: {query}"
+        )
+
+        risultati = _richiesta_serper(query)
+
+        print(
+            f"[Ricerca] Risultati organici: {len(risultati)}"
+        )
+
+        for risultato in risultati:
+            link = risultato["link"]
+
+            if link in url_visti:
+                continue
+
+            url_visti.add(link)
+            corpus.append(
+                {
+                    "query": query,
+                    **risultato,
+                }
+            )
+
+    print(
+        f"[Ricerca] Fonti uniche raccolte: {len(corpus)}"
+    )
+    return corpus
+
+
+def _query_scoperta(data_italiana):
+    return [
+        f'Juventus "accadde oggi" "{data_italiana}"',
+        f'Juventus storia "{data_italiana}" trofeo partita debutto acquisto',
+        f'site:juventus.com "{data_italiana}" Juventus storia',
+        f'Juventus on this day "{data_italiana}"',
+    ]
+
+
+def _query_verifica(candidati):
+    queries = []
+
+    for evento in candidati[:8]:
+        if not isinstance(evento, dict):
+            continue
+
+        anno = str(evento.get("year", "")).strip()
+        titolo = str(evento.get("title", "")).strip()
+        competizione = str(
+            evento.get("competition", "")
+        ).strip()
+        soggetto = str(
+            evento.get("opponent", "")
+        ).strip()
+
+        termini = " ".join(
+            parte
+            for parte in (
+                "Juventus",
+                anno,
+                titolo,
+                competizione,
+                soggetto,
+            )
+            if parte
+        )
+
+        if termini:
+            queries.append(termini)
+
+    return queries[:8]
 
 
 def scopri_candidati(
@@ -466,42 +591,38 @@ def scopri_candidati(
     data_italiana,
     models=None,
 ):
-    """Prima passata: trova eventi juventini con importanza almeno 8/10."""
-    istruzioni = """
-Sei un ricercatore di storia della Juventus. Devi proporre candidati, non
-scrivere un post. Usa Google Search e sii molto selettivo.
+    """Trova candidati usando Serper e li fa analizzare da Gemini."""
+    fonti = _cerca_fonti(
+        _query_scoperta(data_italiana)
+    )
 
-Considera esclusivamente la prima squadra maschile e fatti avvenuti
-esattamente nella data richiesta.
+    if not fonti:
+        print(
+            "[Ricerca] Nessuna fonte trovata: nessun candidato."
+        )
+        return []
+
+    istruzioni = """
+Sei un ricercatore di storia della Juventus. Devi analizzare esclusivamente
+i risultati di ricerca forniti nel prompt. Non usare conoscenze esterne e
+non inventare dettagli assenti dalle fonti.
+
+Considera soltanto la prima squadra maschile e fatti avvenuti esattamente
+nel giorno e mese richiesti.
 
 Sono candidabili:
 1. trofei ufficiali e Scudetti matematicamente conquistati;
-2. partite iconiche o memorabili, finali, rimonte, imprese europee e vittorie
-   ancora oggi ricordate come capitoli importanti della storia juventina;
+2. partite iconiche o memorabili;
 3. record storici positivi di squadra;
-4. debutti davvero iconici di campioni o simboli del club;
-5. traguardi individuali eccezionali e storicamente rilevanti;
-6. acquisti ufficiali realmente epocali o iconici, tra i più importanti
-   della storia del club.
+4. debutti davvero iconici;
+5. traguardi individuali eccezionali;
+6. acquisti ufficiali realmente epocali o iconici.
 
 Per ACQUISTO_ICONICO usa soltanto la data dell'annuncio ufficiale Juventus.
-Non usare indiscrezioni, accordi verbali, arrivi in aeroporto, visite
-mediche, presentazioni o primi allenamenti. Non basta che il giocatore fosse
-costoso o titolare: l'operazione deve essere ancora oggi riconosciuta come
-una delle più importanti o simboliche della storia juventina.
+Scarta indiscrezioni, visite mediche, aeroporto e presentazioni.
 
-Benchmark:
-- Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è PARTITA_ICONICA;
-- un normale big match non è automaticamente memorabile;
-- un semplice esordio, una centesima presenza o un acquisto ordinario non
-  raggiungono la soglia.
-
-Scarta: normali vittorie, amichevoli, compleanni, nascite, morti, cessioni,
-rinnovi, semplici presentazioni, singoli gol ordinari, ricorrenze minori,
-sorteggi, premiazioni, sconfitte, eliminazioni, eventi negativi, Women,
-Next Gen, Primavera e giovanili.
-
-È meglio restituire zero eventi che forzare candidati deboli.
+Scarta eventi ordinari, sconfitte, eliminazioni, compleanni, morti, rinnovi,
+cessioni, Women, Next Gen, Primavera e giovanili.
 
 Rispondi esclusivamente con JSON valido:
 {
@@ -511,11 +632,12 @@ Rispondi esclusivamente con JSON valido:
       "year": 1234,
       "category": "categoria ammessa",
       "outcome": "esito ammesso",
-      "competition": "competizione, record o contesto",
+      "competition": "competizione o contesto",
       "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo breve",
       "description": "una frase fattuale breve",
-      "reason": "motivo del rilievo storico"
+      "reason": "motivo del rilievo",
+      "evidence_urls": ["https://..."]
     }
   ]
 }
@@ -530,20 +652,27 @@ Outcome:
 TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
 DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
 """
+
     prompt = (
-        f"Cerca eventi juventini con importanza potenziale almeno 8/10 "
-        f"avvenuti il {data_italiana} di qualsiasi anno. Giorno e mese "
-        f"devono essere {giorno_mese}; event_date deve contenere l'anno "
-        "reale. Non cambiare data e non riempire la lista con eventi ordinari."
+        f"Data da verificare: {data_italiana}, giorno-mese {giorno_mese}.\n\n"
+        "RISULTATI DI RICERCA SERPER:\n"
+        + json.dumps(
+            fonti,
+            ensure_ascii=False,
+            indent=2,
+        )
     )
+
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
-        config=_config_con_ricerca(istruzioni),
+        config=_config_senza_ricerca(istruzioni),
     )
+
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
+
     return eventi if isinstance(eventi, list) else []
 
 
@@ -554,42 +683,44 @@ def verifica_candidati(
     data_italiana,
     models=None,
 ):
-    """Seconda passata: verifica data, fonti, categoria e importanza."""
+    """Verifica i candidati con una seconda ricerca Serper mirata."""
     if not candidati:
         return []
 
-    istruzioni = """
-Sei il fact-checker finale di una rubrica Juventus. Verifica ogni candidato
-da zero con Google Search.
+    queries = _query_verifica(candidati)
 
-Approva soltanto se:
-- almeno due fonti web affidabili e indipendenti confermano il fatto;
-- giorno, mese e anno sono esatti;
+    if not queries:
+        return []
+
+    fonti = _cerca_fonti(queries)
+
+    if not fonti:
+        print(
+            "[Verifica] Nessuna fonte trovata: candidati scartati."
+        )
+        return []
+
+    istruzioni = """
+Sei il fact-checker finale di una rubrica Juventus. Usa esclusivamente i
+risultati di ricerca forniti nel prompt.
+
+Approva un evento soltanto se:
+- almeno due URL di domini indipendenti confermano lo stesso fatto;
+- giorno, mese e anno sono coerenti;
 - riguarda la prima squadra maschile;
 - è positivo o celebrativo;
 - merita davvero 8, 9 o 10.
 
-Scala editoriale:
-10 = evento epocale: Champions/Coppa dei Campioni, Scudetto, impresa
-leggendaria o acquisto tra i più clamorosi nella storia del calcio.
-9 = grande trofeo, impresa universalmente iconica, record storico enorme,
-debutto o traguardo di un simbolo assoluto, acquisto di un fuoriclasse con
-enorme risonanza e impatto storico.
-8 = evento ancora oggi molto interessante per un tifoso juventino: partita
-memorabile, debutto iconico, traguardo eccezionale o acquisto simbolico e
-storicamente rilevante. Deve essere chiaramente sopra una normale ricorrenza.
-7 o meno = normale vittoria, curiosità, semplice debutto, primo gol,
-centesima presenza ordinaria, operazione di mercato normale o giocatore
-costoso ma non storico. Va scartato.
+Scala:
+10 = evento epocale.
+9 = grande trofeo, impresa iconica, record enorme o acquisto storico.
+8 = evento ancora oggi molto rilevante per un tifoso juventino.
+7 o meno = evento ordinario, da scartare.
 
-Per ACQUISTO_ICONICO:
-- usa soltanto la data dell'annuncio ufficiale Juventus;
-- non approvare indiscrezioni, visite mediche, aeroporto o presentazione;
-- non basta il prezzo;
-- assegna 8+ solo a operazioni considerate ancora oggi davvero iconiche.
+Per ACQUISTO_ICONICO accetta soltanto l'annuncio ufficiale dell'acquisto.
+Non approvare visite mediche, aeroporto, indiscrezioni o presentazione.
 
-Juventus-Atletico Madrid 3-0 del 12 marzo 2019 è il benchmark di una
-PARTITA_ICONICA. Non promuovere eventi solo per arrivare a tre.
+Non inventare URL. Usa soltanto URL presenti nel corpus Serper.
 
 Rispondi esclusivamente con JSON valido:
 {
@@ -600,10 +731,10 @@ Rispondi esclusivamente con JSON valido:
       "category": "categoria ammessa",
       "outcome": "esito ammesso",
       "importance": 8,
-      "competition": "competizione, record o contesto",
+      "competition": "competizione o contesto",
       "opponent": "avversario, giocatore o stringa vuota",
       "title": "titolo da due a cinque parole",
-      "description": "una sola frase fattuale breve",
+      "description": "una frase, massimo 240 caratteri",
       "canonical_id": "ANNO|CATEGORIA|CONTESTO|SOGGETTO",
       "source_urls": [
         "https://fonte1.example/",
@@ -613,32 +744,36 @@ Rispondi esclusivamente con JSON valido:
   ]
 }
 
-Categorie:
-TROFEO, SCUDETTO, PARTITA_ICONICA, PARTITA_MEMORABILE, RECORD_STORICO,
-DEBUTTO_ICONICO, TRAGUARDO_STORICO, ACQUISTO_ICONICO.
-
-Outcome:
-TROFEO_CONQUISTATO, SCUDETTO_CONQUISTATO, VITTORIA, RECORD_POSITIVO,
-DEBUTTO, TRAGUARDO_RAGGIUNTO, ACQUISTO_UFFICIALE.
-
-Titolo: 2-5 parole. Descrizione: una frase, massimo 240 caratteri, senza
-HTML, Markdown o URL. Restituisci tutti gli eventi validi 8-10, fino a un
-massimo di 8; il codice sceglierà i migliori tre.
+Restituisci tutti gli eventi validi da 8 a 10, fino a un massimo di 8.
+Il codice sceglierà i migliori tre.
 """
+
     prompt = (
-        f"La ricorrenza è il {data_italiana}, giorno e mese {giorno_mese}. "
-        "Verifica rigorosamente questi candidati, assegna importanza 8-10 "
-        "solo quando meritata e usa l'anno reale in event_date:\n"
-        f"{json.dumps(candidati, ensure_ascii=False)}"
+        f"Data: {data_italiana}, giorno-mese {giorno_mese}.\n\n"
+        "CANDIDATI:\n"
+        + json.dumps(
+            candidati,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n\nRISULTATI DI VERIFICA SERPER:\n"
+        + json.dumps(
+            fonti,
+            ensure_ascii=False,
+            indent=2,
+        )
     )
+
     risposta = chiama_gemini_con_fallback(
         client=client,
         models=models or modelli_gemini_configurati(),
         prompt=prompt,
-        config=_config_con_ricerca(istruzioni),
+        config=_config_senza_ricerca(istruzioni),
     )
+
     dati = estrai_json(risposta.text or "")
     eventi = dati.get("events", [])
+
     return eventi if isinstance(eventi, list) else []
 
 
@@ -1177,6 +1312,7 @@ def invia_a_telegram(testo):
 def main():
     variabili = (
         "GEMINI_API_KEY",
+        "SERPER_API_KEY",
         "TELEGRAM_TOKEN",
         "TELEGRAM_CHAT_ID",
     )
@@ -1223,34 +1359,40 @@ def main():
     )
 
 
-def _stampa_esito_senza_invio(exc):
-    """Chiude il job senza errore quando Gemini non è utilizzabile."""
-    print()
-    print("=" * 64)
-    print("ESITO FINALE: NESSUN INVIO")
-    print("=" * 64)
-    print(f"Motivo: {exc}")
-    print("Telegram: nessun messaggio inviato.")
-    print("Storico: invariato.")
-    print("Workflow: completato senza errore; verrà ritentato al prossimo avvio.")
-    print("=" * 64)
-
-
 if __name__ == "__main__":
     try:
         main()
-    except GeminiNonDisponibileError as exc:
-        _stampa_esito_senza_invio(exc)
-        raise SystemExit(0)
     except Exception as exc:
+        messaggio = str(exc)
+        previsto = any(
+            indicatore in messaggio.lower()
+            for indicatore in (
+                "429",
+                "resource_exhausted",
+                "quota",
+                "serper http 429",
+                "serper non raggiungibile",
+                "gemini non disponibile",
+            )
+        )
+
         print()
         print("=" * 64)
-        print("ESITO FINALE: ERRORE REALE")
+
+        if previsto:
+            print("ESITO FINALE: NESSUN INVIO")
+            print("=" * 64)
+            print(f"Motivo: {messaggio}")
+            print("Telegram: nessun messaggio inviato.")
+            print("Storico: invariato.")
+            print("Il bot riproverà alla prossima esecuzione.")
+            print("=" * 64)
+            raise SystemExit(0)
+
+        print("ESITO FINALE: ERRORE")
         print("=" * 64)
-        print(f"Causa: {exc}")
-        print("Telegram: stato non confermato.")
-        print("Storico: controllare il log precedente.")
+        print(f"Motivo: {messaggio}")
+        print("Telegram: invio non confermato.")
+        print("Storico: non aggiornato.")
         print("=" * 64)
-        if MOSTRA_TRACEBACK:
-            raise
         raise SystemExit(1)
