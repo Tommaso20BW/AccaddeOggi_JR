@@ -5,6 +5,7 @@ import random
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
