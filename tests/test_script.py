@@ -464,6 +464,39 @@ class TestValidazioneEditoriale(unittest.TestCase):
         )
 
 
+class TestScartatiFactCheck(unittest.TestCase):
+    def test_candidato_eliminato_dal_fact_check_viene_archiviato(self):
+        candidato = {
+            "event_date": "2010-08-05",
+            "year": 2010,
+            "category": "PARTITA_MEMORABILE",
+            "competition": "UEFA Europa League",
+            "opponent": "Shamrock Rovers",
+            "title": "Vittoria sullo Shamrock Rovers",
+        }
+
+        scartati = script.raccogli_scartati_fact_check([candidato], [])
+
+        self.assertEqual(len(scartati), 1)
+        self.assertEqual(scartati[0]["phase"], "fact_check")
+
+    def test_candidato_verificato_non_viene_archiviato(self):
+        candidato = {
+            "event_date": "2010-08-05",
+            "year": 2010,
+            "category": "PARTITA_MEMORABILE",
+            "competition": "UEFA Europa League",
+            "opponent": "Shamrock Rovers",
+            "title": "Vittoria sullo Shamrock Rovers",
+        }
+        verificato = dict(candidato)
+
+        self.assertEqual(
+            script.raccogli_scartati_fact_check([candidato], [verificato]),
+            [],
+        )
+
+
 class TestScartati(unittest.TestCase):
     def test_raccoglie_motivo_validazione(self):
         debole = evento(importance=7)
