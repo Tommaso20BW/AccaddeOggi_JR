@@ -464,6 +464,99 @@ class TestValidazioneEditoriale(unittest.TestCase):
         )
 
 
+class TestScartati(unittest.TestCase):
+    def test_raccoglie_motivo_validazione(self):
+        debole = evento(importance=7)
+        self.assertEqual(
+            script.valida_eventi([debole], "05-22"),
+            [],
+        )
+
+        scartati = script.raccogli_scartati_validazione(
+            [debole]
+        )
+
+        self.assertEqual(len(scartati), 1)
+        self.assertEqual(
+            scartati[0]["phase"],
+            "validazione",
+        )
+        self.assertIn(
+            "sotto soglia",
+            scartati[0]["reason"],
+        )
+
+    def test_salva_scartati_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "scartati.json"
+            scarto = {
+                "phase": "validazione",
+                "reason": "importanza sotto soglia (7/10)",
+                "event": evento(importance=7),
+            }
+
+            script.salva_scartati(
+                [scarto],
+                "2026-08-05T09:00:00+02:00",
+                percorso,
+            )
+
+            dati = json.loads(
+                percorso.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(dati["version"], 1)
+        self.assertEqual(len(dati["rejected"]), 1)
+        self.assertEqual(
+            dati["rejected"][0]["phase"],
+            "validazione",
+        )
+
+    def test_non_duplica_stesso_scarto_nello_stesso_giorno(self):
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "scartati.json"
+            scarto = {
+                "phase": "validazione",
+                "reason": "categoria non ammessa",
+                "event": evento(),
+            }
+
+            script.salva_scartati(
+                [scarto],
+                "2026-08-05T09:00:00+02:00",
+                percorso,
+            )
+            script.salva_scartati(
+                [scarto],
+                "2026-08-05T11:00:00+02:00",
+                percorso,
+            )
+
+            self.assertEqual(
+                len(script.carica_scartati(percorso)),
+                1,
+            )
+
+    def test_duplicato_storico_finiscе_negli_scartati(self):
+        corrente = evento()
+        vecchio = dict(
+            corrente,
+            published_at="2026-05-22T07:30:00+02:00",
+        )
+        raccolta = []
+
+        risultati = script.scarta_gia_pubblicati(
+            [corrente],
+            [vecchio],
+            anno_pubblicazione=2026,
+            scartati=raccolta,
+        )
+
+        self.assertEqual(risultati, [])
+        self.assertEqual(len(raccolta), 1)
+        self.assertEqual(raccolta[0]["phase"], "storico")
+
+
 class TestStorico(unittest.TestCase):
     def test_stesso_anno_bloccato_anno_successivo_permesso(self):
         corrente = evento()
