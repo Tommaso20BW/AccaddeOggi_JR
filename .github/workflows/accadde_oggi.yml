@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Controlla il codice della repository
+      - name: Scarica il repository
         uses: actions/checkout@v6
 
       - name: Configura Python
@@ -35,7 +35,7 @@ jobs:
       - name: Esegui i test
         run: python -m unittest discover -s tests -v
 
-      - name: Esegui lo script Python
+      - name: Esegui Accadde Oggi
         env:
           TZ: Europe/Rome
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -44,7 +44,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -u script.py
 
-      - name: Salva la memoria degli eventi pubblicati
+      - name: Salva lo storico
         if: success()
         run: |
           if git diff --quiet -- data/eventi_pubblicati.json; then
@@ -54,19 +54,16 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add data/eventi_pubblicati.json
           git commit -m "chore: aggiorna storico eventi pubblicati [skip ci]"
           git push
 
-      - name: Pulisci la cronologia dei run
+      - name: Pulisci i run completati
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: "0"
         run: |
-          # KEEP=0 cancella tutti i run completati precedenti.
-          # Il run attualmente in esecuzione resta visibile finché non termina.
           gh api "repos/${{ github.repository }}/actions/workflows/accadde_oggi.yml/runs?status=completed&per_page=100"             --jq '.workflow_runs | sort_by(.created_at) | reverse | .['"$KEEP"':] | .[].id' |
           while read -r RUN_ID; do
             [ -z "$RUN_ID" ] && continue
