@@ -30,6 +30,15 @@ MODELLI_GEMINI_PREDEFINITI = (
 MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 8
 
+MAX_CICLI_GEMINI = max(
+    1,
+    int(os.environ.get("MAX_CICLI_GEMINI", "3")),
+)
+ATTESA_503_GEMINI = max(
+    1,
+    int(os.environ.get("ATTESA_503_GEMINI", "20")),
+)
+
 PERCORSO_STORICO = Path(
     os.environ.get(
         "EVENT_HISTORY_FILE",
@@ -163,41 +172,63 @@ def converti_anno_in_emoji(anno):
 
 
 def _testo_errore(exc):
-    return str(exc).lower()
+    return str(exc)
 
 
-def _quota_definitivamente_esaurita(exc):
-    """
-    Riconosce una quota realmente esaurita.
+def _secondi_attesa_gemini(messaggio):
+    """Ricava il retry delay suggerito dall'errore Gemini."""
+    for pattern in (
+        r"Please retry in\s+([0-9.]+)s",
+        r"['\"]retryDelay['\"]\s*:\s*['\"]([0-9.]+)s",
+    ):
+        match = re.search(
+            pattern,
+            messaggio,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return min(
+                max(int(float(match.group(1))) + 2, 2),
+                60,
+            )
+    return 30
 
-    In questo caso non serve cambiare modello, perché tutti i modelli
-    usano la stessa API key e lo stesso progetto Google.
-    """
-    errore = _testo_errore(exc)
 
-    indicatori = (
-        "you exceeded your current quota",
-        "exceeded your current quota",
-        "check your plan and billing",
-        "quota exceeded",
-        "quota_exceeded",
-        "billing details",
+def _quota_giornaliera_modello(messaggio):
+    return bool(
+        re.search(
+            r"GenerateRequestsPerDay|requests? per day|daily quota",
+            messaggio,
+            flags=re.IGNORECASE,
+        )
     )
 
+
+def _errore_quota(messaggio):
     return (
-        "resource_exhausted" in errore
-        and any(indicatore in errore for indicatore in indicatori)
+        "429" in messaggio
+        or "RESOURCE_EXHAUSTED" in messaggio.upper()
     )
 
 
-def _modello_non_disponibile(exc):
-    """
-    Riconosce un modello inesistente, ritirato o non supportato.
+def _errore_temporaneo(messaggio):
+    testo = messaggio.lower()
+    return (
+        "500" in messaggio
+        or "502" in messaggio
+        or "503" in messaggio
+        or "504" in messaggio
+        or "unavailable" in testo
+        or "overloaded" in testo
+        or "deadline_exceeded" in testo
+        or "timed out" in testo
+        or "timeout" in testo
+        or "connection reset" in testo
+    )
 
-    Solo in questi casi si passa al modello successivo.
-    """
-    errore = _testo_errore(exc)
 
+def _modello_non_disponibile(messaggio):
+    testo = messaggio.lower()
     indicatori = (
         "404",
         "410",
@@ -208,87 +239,7 @@ def _modello_non_disponibile(exc):
         "not supported",
         "shut down",
     )
-
-    return any(indicatore in errore for indicatore in indicatori)
-
-
-def _errore_temporaneo(exc):
-    """
-    Riconosce un errore momentaneo.
-
-    Un 429 con messaggio esplicito di quota esaurita non viene ritentato.
-    """
-    if _quota_definitivamente_esaurita(exc):
-        return False
-
-    if _modello_non_disponibile(exc):
-        return False
-
-    errore = _testo_errore(exc)
-
-    indicatori = (
-        "429",
-        "resource_exhausted",
-        "500",
-        "502",
-        "503",
-        "504",
-        "unavailable",
-        "deadline_exceeded",
-        "connection reset",
-        "timed out",
-        "timeout",
-    )
-
-    return any(indicatore in errore for indicatore in indicatori)
-
-
-def chiama_gemini_con_retry(
-    client,
-    model,
-    prompt,
-    config,
-    max_retries=3,
-):
-    """Chiama un modello e riprova solo gli errori temporanei."""
-    if max_retries < 1:
-        raise ValueError("max_retries deve essere almeno 1.")
-
-    for attempt in range(max_retries):
-        try:
-            return client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config,
-            )
-
-        except Exception as exc:
-            if _quota_definitivamente_esaurita(exc):
-                raise RuntimeError(
-                    "Quota Gemini esaurita o non disponibile per questa API key. "
-                    "Il problema riguarda il progetto Google, non il singolo "
-                    "modello. Controlla quota, piano e fatturazione."
-                ) from exc
-
-            ultimo_tentativo = attempt == max_retries - 1
-
-            if not _errore_temporaneo(exc) or ultimo_tentativo:
-                raise
-
-            attesa = min(
-                12,
-                (2**attempt) + random.uniform(0, 1),
-            )
-
-            print(
-                f"Errore temporaneo con {model}. "
-                f"Tentativo {attempt + 1}/{max_retries} fallito. "
-                f"Riprovo tra {attesa:.1f}s..."
-            )
-
-            time.sleep(attesa)
-
-    raise RuntimeError("Gemini non disponibile.")
+    return any(indicatore in testo for indicatore in indicatori)
 
 
 def chiama_gemini_con_fallback(
@@ -296,62 +247,127 @@ def chiama_gemini_con_fallback(
     models,
     prompt,
     config,
-    max_retries=3,
+    max_retries=None,
 ):
     """
-    Prova più modelli in ordine.
+    Strategia uguale al bot Notizie.
 
-    Passa al modello successivo solo se il precedente non esiste,
-    è stato ritirato oppure non è supportato.
+    Su 429 o 503 prova il modello successivo. Dopo aver tentato tutti i
+    modelli, attende e ripete l'intera catena.
     """
     modelli = tuple(models)
 
     if not modelli:
         raise RuntimeError("Nessun modello Gemini configurato.")
 
+    cicli = (
+        MAX_CICLI_GEMINI
+        if max_retries is None
+        else max(1, int(max_retries))
+    )
+
     ultimo_errore = None
+    modelli_con_quota_giornaliera_esaurita = set()
 
-    for indice, modello in enumerate(modelli):
-        try:
-            risposta = chiama_gemini_con_retry(
-                client=client,
-                model=modello,
-                prompt=prompt,
-                config=config,
-                max_retries=max_retries,
-            )
+    for ciclo in range(1, cicli + 1):
+        attesa_ciclo = None
+        modelli_tentati = 0
 
-            print(
-                f"Risposta ottenuta con il modello Gemini: {modello}"
-            )
-            return risposta
+        for modello in modelli:
+            if modello in modelli_con_quota_giornaliera_esaurita:
+                continue
 
-        except Exception as exc:
-            ultimo_errore = exc
-            testo_errore = _testo_errore(exc)
+            modelli_tentati += 1
 
-            if (
-                _quota_definitivamente_esaurita(exc)
-                or "quota gemini esaurita" in testo_errore
-            ):
-                raise
-
-            if not _modello_non_disponibile(exc):
-                raise
-
-            if indice < len(modelli) - 1:
-                successivo = modelli[indice + 1]
+            try:
                 print(
-                    f"Modello Gemini non disponibile: {modello}. "
-                    f"Passo al fallback: {successivo}."
+                    f"Tentativo con il modello {modello} "
+                    f"(ciclo {ciclo}/{cicli})..."
                 )
 
-    if ultimo_errore is not None:
-        raise ultimo_errore
+                risposta = client.models.generate_content(
+                    model=modello,
+                    contents=prompt,
+                    config=config,
+                )
 
-    raise RuntimeError(
-        "Nessun modello Gemini configurato è disponibile."
-    )
+                print(
+                    f"Risposta ottenuta con il modello Gemini: {modello}"
+                )
+                return risposta
+
+            except Exception as exc:
+                ultimo_errore = exc
+                messaggio = _testo_errore(exc)
+
+                if _modello_non_disponibile(messaggio):
+                    print(
+                        f"Modello Gemini non disponibile: {modello}. "
+                        "Provo il modello successivo..."
+                    )
+                    continue
+
+                if _errore_quota(messaggio):
+                    if _quota_giornaliera_modello(messaggio):
+                        modelli_con_quota_giornaliera_esaurita.add(
+                            modello
+                        )
+                        print(
+                            f"{modello}: quota giornaliera esaurita. "
+                            "Lo escludo dai prossimi cicli..."
+                        )
+                        continue
+
+                    attesa_quota = _secondi_attesa_gemini(
+                        messaggio
+                    )
+                    attesa_ciclo = max(
+                        attesa_ciclo or 0,
+                        attesa_quota,
+                    )
+
+                    print(
+                        f"Quota temporanea per {modello}. "
+                        "Provo il modello successivo..."
+                    )
+                    continue
+
+                if _errore_temporaneo(messaggio):
+                    attesa_503 = min(
+                        ATTESA_503_GEMINI * (2 ** (ciclo - 1)),
+                        60,
+                    )
+                    attesa_ciclo = max(
+                        attesa_ciclo or 0,
+                        attesa_503,
+                    )
+
+                    print(
+                        f"Modello {modello} temporaneamente non disponibile. "
+                        "Provo il modello successivo..."
+                    )
+                    continue
+
+                raise
+
+        if ciclo >= cicli or modelli_tentati == 0:
+            break
+
+        if attesa_ciclo is None:
+            break
+
+        print(
+            "Tutti i modelli disponibili sono temporaneamente occupati. "
+            f"Attendo {attesa_ciclo}s prima del ciclo successivo..."
+        )
+        time.sleep(attesa_ciclo)
+
+    if ultimo_errore is None:
+        raise RuntimeError(
+            "Nessun modello Gemini configurato è disponibile."
+        )
+
+    raise ultimo_errore
 
 
 def estrai_json(testo):
