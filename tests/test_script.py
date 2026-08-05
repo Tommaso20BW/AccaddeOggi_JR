@@ -98,7 +98,7 @@ class TestConfigurazione(unittest.TestCase):
 
     def test_config_gemini_non_contiene_google_search(self):
         config = script._config_senza_ricerca("istruzioni")
-        self.assertFalse(hasattr(config, "tools"))
+        self.assertIsNone(getattr(config, "tools", None))
         self.assertEqual(config.system_instruction, "istruzioni")
 
 
@@ -352,7 +352,7 @@ class TestScopertaVerifica(unittest.TestCase):
 
         self.assertEqual(len(eventi), 1)
         config = chiamata.call_args.kwargs["config"]
-        self.assertFalse(hasattr(config, "tools"))
+        self.assertIsNone(getattr(config, "tools", None))
 
     def test_verifica_senza_candidati(self):
         self.assertEqual(
