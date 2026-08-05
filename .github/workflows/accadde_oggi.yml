@@ -44,18 +44,18 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -u script.py
 
-      - name: Salva lo storico
+      - name: Salva storico e scarti
         if: success()
         run: |
-          if git diff --quiet -- data/eventi_pubblicati.json; then
-            echo "Nessun nuovo evento da registrare."
+          if git diff --quiet -- data/eventi_pubblicati.json data/eventi_scartati.json; then
+            echo "Nessuna modifica da registrare."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/eventi_pubblicati.json
-          git commit -m "chore: aggiorna storico eventi pubblicati [skip ci]"
+          git add data/eventi_pubblicati.json data/eventi_scartati.json
+          git commit -m "chore: aggiorna storico e scarti [skip ci]"
           git push
 
       - name: Pulisci i run completati
