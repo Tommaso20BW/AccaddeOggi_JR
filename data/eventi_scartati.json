@@ -19,6 +19,44 @@
           "https://www.juventus.com/it/video/accadde-oggi-2010-del-piero-stende-lo-shamrock-rovers"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-06T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2005-08-06",
+        "year": 2005,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "VITTORIA",
+        "competition": "Amichevole",
+        "opponent": "Benfica",
+        "title": "Vittoria in amichevole contro il Benfica",
+        "description": "La Juventus batte il Benfica a Lisbona, con una prestazione descritta dalla stampa come da 'giganti'.",
+        "reason": "Vittoria significativa in amichevole contro una squadra di prestigio, evidenziata dalla stampa sportiva.",
+        "evidence_urls": [
+          "https://www.gazzetta.it/Calcio/Squadre/Juventus/Primo_Piano/2005/08_Agosto/06/benfica.shtml"
+        ]
+      }
+    },
+    {
+      "recorded_at": "2026-08-06T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2006-08-06",
+        "year": 2006,
+        "category": "TRAGUARDO_STORICO",
+        "outcome": "TRAGUARDO_RAGGIUNTO",
+        "competition": "Coppa del Mondo FIFA",
+        "opponent": "",
+        "title": "Riconoscimento ai Campioni del Mondo bianconeri",
+        "description": "I giocatori della Juventus, campioni del mondo con l'Italia, vengono celebrati per la vittoria della Coppa del Mondo FIFA 2006.",
+        "reason": "Celebrazione del successo dei giocatori della Juventus nella vittoria della Coppa del Mondo 2006, un traguardo eccezionale per il club.",
+        "evidence_urls": [
+          "https://www.facebook.com/Juventus/photos/mark-your-calendars-%EF%B8%8Fset-your-reminders-for-our-pre-season-matches-the-perfect-w/1018843549589379/"
+        ]
+      }
     }
   ]
 }
