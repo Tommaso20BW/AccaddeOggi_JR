@@ -57,6 +57,25 @@
           "https://www.facebook.com/Juventus/photos/mark-your-calendars-%EF%B8%8Fset-your-reminders-for-our-pre-season-matches-the-perfect-w/1018843549589379/"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-07T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2020-08-07",
+        "year": 2020,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "PARTITA_DISPUTATA",
+        "competition": "UEFA Champions League",
+        "opponent": "",
+        "title": "Ripresa Champions League",
+        "description": "La Juventus disputa la gara di ritorno degli ottavi di finale di UEFA Champions League, segnando la ripresa della competizione.",
+        "reason": "La ripresa della massima competizione europea dopo la sospensione e la disputa di una gara ad eliminazione diretta.",
+        "evidence_urls": [
+          "https://www.juventus.com/images/image/upload/fl_attachment/dev/oxqxog2hu6takxvcfuvr.pdf"
+        ]
+      }
     }
   ]
 }
