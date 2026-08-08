@@ -76,6 +76,44 @@
           "https://www.juventus.com/images/image/upload/fl_attachment/dev/oxqxog2hu6takxvcfuvr.pdf"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-08T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "1926-08-08",
+        "year": 1926,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "VITTORIA",
+        "competition": "Prima Divisione",
+        "opponent": "Alba Roma",
+        "title": "Vittoria per 7-1 contro l'Alba Roma",
+        "description": "La Juventus supera la formazione capitolina per 7-1 a Torino con tripletta di Hirzer, ipotecando il secondo titolo della sua storia.",
+        "reason": "Vittoria travolgente nella finale del campionato che ha ipotecato lo scudetto.",
+        "evidence_urls": [
+          "https://www.juventus.com/it/news/articoli/8-agosto-1926-scudetto-ipotecato"
+        ]
+      }
+    },
+    {
+      "recorded_at": "2026-08-08T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2015-08-08",
+        "year": 2015,
+        "category": "TROFEO",
+        "outcome": "TROFEO_CONQUISTATO",
+        "competition": "Supercoppa Italiana",
+        "opponent": "Lazio",
+        "title": "Vittoria della Supercoppa Italiana 2015",
+        "description": "La Juventus sconfigge la Lazio 2-0 a Shanghai con le reti di Mandzukic e Dybala, conquistando la Supercoppa Italiana.",
+        "reason": "Conquista di un trofeo ufficiale.",
+        "evidence_urls": [
+          "https://www.ilfattoquotidiano.it/2015/08/08/supercoppa-italiana-2015-primo-trofeo-per-la-juventus-battuta-la-lazio-a-shanghay/1944827/"
+        ]
+      }
     }
   ]
 }

@@ -1,4 +1,16 @@
 {
   "version": 1,
-  "events": []
+  "events": [
+    {
+      "canonical_id": "2015|TROFEO|SUPERCOPPA_ITALIANA|LAZIO",
+      "event_date": "2015-08-08",
+      "year": 2015,
+      "category": "TROFEO",
+      "outcome": "TROFEO_CONQUISTATO",
+      "competition": "Supercoppa Italiana",
+      "opponent": "Lazio",
+      "title": "Supercoppa Italiana 2015",
+      "published_at": "2026-08-08T07:30:25+02:00"
+    }
+  ]
 }
