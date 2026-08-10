@@ -114,6 +114,25 @@
           "https://www.ilfattoquotidiano.it/2015/08/08/supercoppa-italiana-2015-primo-trofeo-per-la-juventus-battuta-la-lazio-a-shanghay/1944827/"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-10T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "1999-08-10",
+        "year": 1999,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "VITTORIA",
+        "competition": "Coppa Intertoto UEFA",
+        "opponent": "Rennes",
+        "title": "Vittoria nella finale d'andata della Coppa Intertoto",
+        "description": "La Juventus batte 2-0 il Rennes allo stadio Manuzzi di Cesena nella finale d'andata della Coppa Intertoto UEFA 1999.",
+        "reason": "Importante vittoria nei confronti europei ad eliminazione diretta, valida per la finale d'andata del trofeo UEFA.",
+        "evidence_urls": [
+          "https://www.juventus.com/it/news/articoli/juve-vs-francia-dieci-gol-da-ricordare"
+        ]
+      }
     }
   ]
 }
