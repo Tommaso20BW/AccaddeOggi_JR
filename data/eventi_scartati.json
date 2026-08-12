@@ -133,6 +133,25 @@
           "https://www.juventus.com/it/news/articoli/juve-vs-francia-dieci-gol-da-ricordare"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-12T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2014-08-12",
+        "year": 2014,
+        "category": "TROFEO",
+        "outcome": "TROFEO_CONQUISTATO",
+        "competition": "Supercoppa europea",
+        "opponent": "Siviglia",
+        "title": "Conquista della Supercoppa UEFA",
+        "description": "La Juventus ha vinto la Supercoppa europea battendo il Siviglia per 2-0.",
+        "reason": "Conquista di un trofeo internazionale ufficiale.",
+        "evidence_urls": [
+          "https://www.tifosibianconeri.com/forum/topic/468784-calciomercato-f-c-juventus-201516-riepilogo-acquisti-cessioni-e-contratti/"
+        ]
+      }
     }
   ]
 }
