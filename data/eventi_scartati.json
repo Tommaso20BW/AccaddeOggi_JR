@@ -152,6 +152,44 @@
           "https://www.tifosibianconeri.com/forum/topic/468784-calciomercato-f-c-juventus-201516-riepilogo-acquisti-cessioni-e-contratti/"
         ]
       }
+    },
+    {
+      "recorded_at": "2026-08-13T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "2008-08-13",
+        "year": 2008,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "VITTORIA",
+        "competition": "UEFA Champions League",
+        "opponent": "Artmedia Bratislava",
+        "title": "Vittoria sull'Artmedia Bratislava e ritorno in Champions League",
+        "description": "La Juventus batte nettamente l'Artmedia Bratislava nella gara d'andata dei preliminari, segnando il ritorno dei bianconeri in Champions League.",
+        "reason": "Segna il ritorno ufficiale della Juventus nella massima competizione europea.",
+        "evidence_urls": [
+          "https://www.tuttomercatoweb.com/accadde-oggi/13-agosto-2008-la-juventus-strapazza-l-artmedia-bratislava-nei-preliminari-di-champions-2134114"
+        ]
+      }
+    },
+    {
+      "recorded_at": "2026-08-13T07:30:00+02:00",
+      "phase": "fact_check",
+      "reason": "non approvato dal fact-check: fonti, data o importanza non sufficienti",
+      "event": {
+        "event_date": "1964-08-13",
+        "year": 1964,
+        "category": "PARTITA_MEMORABILE",
+        "outcome": "VITTORIA",
+        "competition": "Coppa delle Fiere",
+        "opponent": "Atletico Madrid",
+        "title": "Vittoria contro l'Atletico Madrid in Coppa delle Fiere",
+        "description": "La Juventus batte l'Atletico Madrid in un incontro di Coppa delle Fiere.",
+        "reason": "Vittoria internazionale contro una prestigiosa avversaria spagnola.",
+        "evidence_urls": [
+          "https://www.luigidimaso.it/category/accadde-oggi-nel-calcio/page/5/"
+        ]
+      }
     }
   ]
 }
