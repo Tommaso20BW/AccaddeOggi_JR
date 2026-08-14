@@ -126,6 +126,15 @@ class TestStorico(unittest.TestCase):
         self.assertTrue(
             compleanni.gia_inviato(date(2026, 8, 14), storico)
         )
+        self.assertEqual(
+            storico["sent_dates"][0]["players"],
+            [
+                {
+                    "name": "Mario Rossi",
+                    "age": 46,
+                }
+            ],
+        )
         self.assertFalse(
             compleanni.gia_inviato(date(2026, 8, 15), storico)
         )
