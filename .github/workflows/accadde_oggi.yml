@@ -44,18 +44,34 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -u script.py
 
-      - name: Salva storico e scarti
+      - name: Esegui Compleanni Juventus
+        env:
+          TZ: Europe/Rome
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO_BOT: ${{ secrets.TELEGRAM_TO_BOT }}
+        run: python -u compleanni.py
+
+      - name: Salva gli storici
         if: success()
         run: |
-          if git diff --quiet -- data/eventi_pubblicati.json data/eventi_scartati.json; then
+          FILES=(eventi_pubblicati.json compleanni_inviati.json)
+
+          for FILE in data/eventi_pubblicati.json data/eventi_scartati.json; do
+            if [ -e "$FILE" ]; then
+              FILES+=("$FILE")
+            fi
+          done
+
+          git add -- "${FILES[@]}"
+
+          if git diff --cached --quiet; then
             echo "Nessuna modifica da registrare."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/eventi_pubblicati.json data/eventi_scartati.json
-          git commit -m "chore: aggiorna storico e scarti [skip ci]"
+          git commit -m "chore: aggiorna gli storici [skip ci]"
           git push
 
       - name: Pulisci i run completati
