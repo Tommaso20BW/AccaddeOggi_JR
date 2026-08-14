@@ -86,7 +86,7 @@ class TestWikidata(unittest.TestCase):
 
 
 class TestFormattazione(unittest.TestCase):
-    def test_messaggio_contiene_data_eta_ed_escape_html(self):
+    def test_messaggio_usa_il_formato_compatto_richiesto(self):
         giocatori = compleanni.interpreta_risposta_wikidata(
             risposta_wikidata(),
             date(2026, 8, 14),
@@ -95,9 +95,12 @@ class TestFormattazione(unittest.TestCase):
             giocatori,
             date(2026, 8, 14),
         )
-        self.assertIn("COMPLEANNI BIANCONERI | 14 AGOSTO", testo)
-        self.assertIn("Andrea &amp; Bianchi", testo)
-        self.assertIn("26 anni", testo)
+        self.assertEqual(
+            testo,
+            "<b>🎂 COMPLEANNI BIANCONERI | 14 AGOSTO</b>\n"
+            "🎉 <b>Andrea &amp; Bianchi</b> — 26 anni\n"
+            "🎉 <b>Mario Rossi</b> — 46 anni",
+        )
 
 
 class TestStorico(unittest.TestCase):

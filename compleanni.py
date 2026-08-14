@@ -234,8 +234,6 @@ def formatta_messaggio(giocatori, oggi):
     data_italiana = f"{oggi.day} {MESI_ITALIANI[oggi.month - 1]}"
     righe = [
         f"<b>🎂 COMPLEANNI BIANCONERI | {data_italiana}</b>",
-        "",
-        "Tanti auguri a:",
     ]
 
     for giocatore in giocatori:
@@ -243,12 +241,6 @@ def formatta_messaggio(giocatori, oggi):
         eta = giocatore["age"]
         righe.append(f"🎉 <b>{nome}</b> — {eta} anni")
 
-    righe.extend(
-        [
-            "",
-            "⚪️⚫️ <i>Buon compleanno!</i>",
-        ]
-    )
     return "\n".join(righe)
 
 
