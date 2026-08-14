@@ -1,15 +1,8 @@
 {
-  "version": 1,
-  "sent_dates": [
+  "2026-08-14": [
     {
-      "date": "2026-08-14",
-      "players": [
-        {
-          "name": "Giorgio Chiellini",
-          "age": 42
-        }
-      ],
-      "sent_at": "2026-08-14T15:55:34+02:00"
+      "name": "Giorgio Chiellini",
+      "age": 42
     }
   ]
 }

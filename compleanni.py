@@ -160,7 +160,7 @@ def carica_storico(percorso=PERCORSO_STORICO):
     percorso = Path(percorso)
 
     if not percorso.exists():
-        return {"version": 1, "sent_dates": []}
+        return {}
 
     try:
         dati = json.loads(percorso.read_text(encoding="utf-8"))
@@ -172,31 +172,40 @@ def carica_storico(percorso=PERCORSO_STORICO):
     if not isinstance(dati, dict):
         raise RuntimeError("Formato dello storico compleanni non valido.")
 
-    date_inviate = dati.get("sent_dates", [])
-
-    if not isinstance(date_inviate, list):
+    if not isinstance(dati, dict):
         raise RuntimeError("Formato dello storico compleanni non valido.")
 
+    # Compatibilità con il vecchio formato con version/sent_dates.
+    if "sent_dates" in dati:
+        date_inviate = dati.get("sent_dates", [])
+
+        if not isinstance(date_inviate, list):
+            raise RuntimeError(
+                "Formato dello storico compleanni non valido."
+            )
+
+        return {
+            str(voce.get("date")): voce.get("players", [])
+            for voce in date_inviate
+            if isinstance(voce, dict)
+            and voce.get("date")
+            and isinstance(voce.get("players", []), list)
+        }
+
     return {
-        "version": 1,
-        "sent_dates": [
-            voce for voce in date_inviate if isinstance(voce, dict)
-        ],
+        str(data_invio): giocatori
+        for data_invio, giocatori in dati.items()
+        if isinstance(giocatori, list)
     }
 
 
 def gia_inviato(oggi, storico):
-    data_oggi = oggi.isoformat()
-    return any(
-        voce.get("date") == data_oggi
-        for voce in storico.get("sent_dates", [])
-    )
+    return oggi.isoformat() in storico
 
 
 def salva_storico(
     oggi,
     giocatori,
-    inviato_il,
     percorso=PERCORSO_STORICO,
 ):
     """Registra l'invio soltanto dopo la conferma di Telegram."""
@@ -205,41 +214,30 @@ def salva_storico(
     data_minima = oggi - timedelta(
         days=GIORNI_CONSERVAZIONE_STORICO - 1
     )
-    date_inviate = []
+    date_inviate = {}
 
-    for voce in storico["sent_dates"]:
+    for data_testo, giocatori_salvati in storico.items():
         try:
-            data_invio = date.fromisoformat(
-                str(voce.get("date", ""))
-            )
+            data_invio = date.fromisoformat(str(data_testo))
         except ValueError:
             continue
 
         if data_minima <= data_invio < oggi:
-            date_inviate.append(voce)
+            date_inviate[data_invio.isoformat()] = giocatori_salvati
 
-    date_inviate.append(
+    date_inviate[oggi.isoformat()] = [
         {
-            "date": oggi.isoformat(),
-            "players": [
-                {
-                    "name": giocatore["name"],
-                    "age": giocatore["age"],
-                }
-                for giocatore in giocatori
-            ],
-            "sent_at": inviato_il,
+            "name": giocatore["name"],
+            "age": giocatore["age"],
         }
-    )
-    date_inviate.sort(key=lambda voce: voce.get("date", ""))
+        for giocatore in giocatori
+    ]
+    date_inviate = dict(sorted(date_inviate.items()))
 
     percorso.parent.mkdir(parents=True, exist_ok=True)
     percorso.write_text(
         json.dumps(
-            {
-                "version": 1,
-                "sent_dates": date_inviate,
-            },
+            date_inviate,
             ensure_ascii=False,
             indent=2,
         )
@@ -302,8 +300,7 @@ def invia_a_telegram(testo):
 
 
 def main():
-    adesso = datetime.now(FUSO_ORARIO)
-    oggi = adesso.date()
+    oggi = datetime.now(FUSO_ORARIO).date()
     storico = carica_storico()
 
     if gia_inviato(oggi, storico):
@@ -327,7 +324,6 @@ def main():
     salva_storico(
         oggi,
         giocatori,
-        adesso.isoformat(timespec="seconds"),
     )
     print("Compleanni inviati con successo e registrati nello storico!")
 

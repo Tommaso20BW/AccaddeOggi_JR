@@ -118,7 +118,6 @@ class TestStorico(unittest.TestCase):
             compleanni.salva_storico(
                 date(2026, 8, 14),
                 giocatori,
-                "2026-08-14T07:30:00+02:00",
                 percorso,
             )
             storico = compleanni.carica_storico(percorso)
@@ -127,7 +126,7 @@ class TestStorico(unittest.TestCase):
             compleanni.gia_inviato(date(2026, 8, 14), storico)
         )
         self.assertEqual(
-            storico["sent_dates"][0]["players"],
+            storico["2026-08-14"],
             [
                 {
                     "name": "Mario Rossi",
@@ -152,12 +151,9 @@ class TestStorico(unittest.TestCase):
             percorso.write_text(
                 json.dumps(
                     {
-                        "version": 1,
-                        "sent_dates": [
-                            {"date": troppo_vecchia.isoformat()},
-                            {"date": data_minima.isoformat()},
-                            {"date": futura.isoformat()},
-                        ],
+                        troppo_vecchia.isoformat(): [],
+                        data_minima.isoformat(): [],
+                        futura.isoformat(): [],
                     }
                 ),
                 encoding="utf-8",
@@ -171,13 +167,12 @@ class TestStorico(unittest.TestCase):
                         "age": 46,
                     }
                 ],
-                "2026-08-14T07:30:00+02:00",
                 percorso,
             )
             storico = compleanni.carica_storico(percorso)
 
         self.assertEqual(
-            [voce["date"] for voce in storico["sent_dates"]],
+            list(storico),
             [data_minima.isoformat(), oggi.isoformat()],
         )
 
@@ -223,10 +218,7 @@ class TestTelegram(unittest.TestCase):
 
 class TestMain(unittest.TestCase):
     def test_nessun_compleanno_non_invia_e_non_scrive(self):
-        with patch("compleanni.carica_storico", return_value={
-            "version": 1,
-            "sent_dates": [],
-        }), patch(
+        with patch("compleanni.carica_storico", return_value={}), patch(
             "compleanni.recupera_compleanni",
             return_value=[],
         ), patch(
@@ -246,10 +238,7 @@ class TestMain(unittest.TestCase):
         )
         ordine = []
 
-        with patch("compleanni.carica_storico", return_value={
-            "version": 1,
-            "sent_dates": [],
-        }), patch(
+        with patch("compleanni.carica_storico", return_value={}), patch(
             "compleanni.recupera_compleanni",
             return_value=giocatori,
         ), patch(
@@ -268,10 +257,10 @@ class TestMain(unittest.TestCase):
     def test_data_gia_inviata_non_interroga_wikidata(self):
         oggi = compleanni.datetime.now(compleanni.FUSO_ORARIO).date()
 
-        with patch("compleanni.carica_storico", return_value={
-            "version": 1,
-            "sent_dates": [{"date": oggi.isoformat()}],
-        }), patch(
+        with patch(
+            "compleanni.carica_storico",
+            return_value={oggi.isoformat(): []},
+        ), patch(
             "compleanni.recupera_compleanni"
         ) as recupera, patch(
             "compleanni.invia_a_telegram"
