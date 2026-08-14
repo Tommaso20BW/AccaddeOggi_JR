@@ -1090,22 +1090,53 @@ def carica_storico(percorso=PERCORSO_STORICO):
             f"Storico eventi illeggibile: {percorso}"
         ) from exc
 
-    eventi = (
-        dati.get("events", [])
-        if isinstance(dati, dict)
-        else []
-    )
-
-    if not isinstance(eventi, list):
+    if not isinstance(dati, dict):
         raise RuntimeError(
             "Formato dello storico eventi non valido."
         )
 
-    return [
-        evento
-        for evento in eventi
-        if isinstance(evento, dict)
-    ]
+    # Compatibilità con il vecchio formato {"version": 1, "events": [...]}.
+    if "events" in dati:
+        eventi = dati.get("events", [])
+
+        if not isinstance(eventi, list):
+            raise RuntimeError(
+                "Formato dello storico eventi non valido."
+            )
+
+        return [
+            evento
+            for evento in eventi
+            if isinstance(evento, dict)
+        ]
+
+    eventi = []
+
+    for data_pubblicazione, voci in dati.items():
+        if not isinstance(voci, list):
+            continue
+
+        for voce in voci:
+            if not isinstance(voce, dict):
+                continue
+
+            canonical_id = str(voce.get("id", "")).strip()
+            titolo = str(voce.get("title", "")).strip()
+            anno = voce.get("year")
+
+            if not canonical_id or not titolo or anno is None:
+                continue
+
+            eventi.append(
+                {
+                    "canonical_id": canonical_id,
+                    "year": anno,
+                    "title": titolo,
+                    "published_at": str(data_pubblicazione),
+                }
+            )
+
+    return eventi
 
 
 def _anno_pubblicazione(evento):
@@ -1217,16 +1248,34 @@ def salva_nello_storico(
         storico.append(
             {
                 "canonical_id": evento["canonical_id"],
-                "event_date": evento["event_date"],
                 "year": evento["year"],
-                "category": evento["category"],
-                "outcome": evento["outcome"],
-                "importance": evento["importance"],
-                "competition": evento["competition"],
-                "stage": evento.get("stage", ""),
-                "opponent": evento["opponent"],
                 "title": evento["title"],
                 "published_at": pubblicato_il,
+            }
+        )
+
+    storico_compatto = {}
+
+    for evento in sorted(
+        storico,
+        key=lambda voce: (
+            _data_pubblicazione(voce) or data_pubblicazione,
+            str(voce.get("canonical_id", "")),
+        ),
+    ):
+        data_evento = _data_pubblicazione(evento)
+
+        if data_evento is None:
+            continue
+
+        storico_compatto.setdefault(
+            data_evento.isoformat(),
+            [],
+        ).append(
+            {
+                "id": evento["canonical_id"],
+                "year": evento["year"],
+                "title": evento["title"],
             }
         )
 
@@ -1239,10 +1288,7 @@ def salva_nello_storico(
 
     temporaneo.write_text(
         json.dumps(
-            {
-                "version": 1,
-                "events": storico,
-            },
+            storico_compatto,
             ensure_ascii=False,
             indent=2,
         )

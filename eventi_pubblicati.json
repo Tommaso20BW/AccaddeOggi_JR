@@ -1,27 +1,16 @@
 {
-  "version": 1,
-  "events": [
+  "2026-08-08": [
     {
-      "canonical_id": "2015|TROFEO|SUPERCOPPA_ITALIANA|LAZIO",
-      "event_date": "2015-08-08",
+      "id": "2015|TROFEO|SUPERCOPPA_ITALIANA|LAZIO",
       "year": 2015,
-      "category": "TROFEO",
-      "outcome": "TROFEO_CONQUISTATO",
-      "competition": "Supercoppa Italiana",
-      "opponent": "Lazio",
-      "title": "Supercoppa Italiana 2015",
-      "published_at": "2026-08-08T07:30:25+02:00"
-    },
+      "title": "Supercoppa Italiana 2015"
+    }
+  ],
+  "2026-08-11": [
     {
-      "canonical_id": "2012|TROFEO|SUPERCOPPA_ITALIANA|NAPOLI",
-      "event_date": "2012-08-11",
+      "id": "2012|TROFEO|SUPERCOPPA_ITALIANA|NAPOLI",
       "year": 2012,
-      "category": "TROFEO",
-      "outcome": "TROFEO_CONQUISTATO",
-      "competition": "Supercoppa Italiana",
-      "opponent": "Napoli",
-      "title": "Vittoria della Supercoppa Italiana 2012",
-      "published_at": "2026-08-11T07:30:15+02:00"
+      "title": "Vittoria della Supercoppa Italiana 2012"
     }
   ]
 }

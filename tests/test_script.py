@@ -519,11 +519,19 @@ class TestStorico(unittest.TestCase):
                 percorso,
             )
             storico = script.carica_storico(percorso)
+            contenuto = json.loads(
+                percorso.read_text(encoding="utf-8")
+            )
 
         self.assertEqual(len(storico), 1)
         self.assertEqual(
             storico[0]["canonical_id"],
             evento()["canonical_id"],
+        )
+        self.assertEqual(list(contenuto), ["2026-05-22"])
+        self.assertEqual(
+            set(contenuto["2026-05-22"][0]),
+            {"id", "year", "title"},
         )
 
     def test_salvataggio_mantiene_solo_ultimi_400_giorni(self):
