@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -137,6 +137,48 @@ class TestStorico(unittest.TestCase):
         )
         self.assertFalse(
             compleanni.gia_inviato(date(2026, 8, 15), storico)
+        )
+
+    def test_salvataggio_mantiene_solo_ultimi_400_giorni(self):
+        oggi = date(2026, 8, 14)
+        data_minima = oggi - timedelta(
+            days=compleanni.GIORNI_CONSERVAZIONE_STORICO - 1
+        )
+        troppo_vecchia = data_minima - timedelta(days=1)
+        futura = oggi + timedelta(days=1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "storico.json"
+            percorso.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "sent_dates": [
+                            {"date": troppo_vecchia.isoformat()},
+                            {"date": data_minima.isoformat()},
+                            {"date": futura.isoformat()},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            compleanni.salva_storico(
+                oggi,
+                [
+                    {
+                        "qid": "Q1",
+                        "name": "Mario Rossi",
+                        "age": 46,
+                    }
+                ],
+                "2026-08-14T07:30:00+02:00",
+                percorso,
+            )
+            storico = compleanni.carica_storico(percorso)
+
+        self.assertEqual(
+            [voce["date"] for voce in storico["sent_dates"]],
+            [data_minima.isoformat(), oggi.isoformat()],
         )
 
 

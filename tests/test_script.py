@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types as pytypes
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -523,6 +524,55 @@ class TestStorico(unittest.TestCase):
         self.assertEqual(
             storico[0]["canonical_id"],
             evento()["canonical_id"],
+        )
+
+    def test_salvataggio_mantiene_solo_ultimi_400_giorni(self):
+        riferimento = datetime.fromisoformat(
+            "2026-08-14T07:30:00+02:00"
+        )
+        al_limite = evento(canonical_id="AL-LIMITE")
+        al_limite["published_at"] = (
+            riferimento
+            - timedelta(
+                days=script.GIORNI_CONSERVAZIONE_STORICO - 1
+            )
+        ).isoformat()
+        troppo_vecchio = evento(canonical_id="TROPPO-VECCHIO")
+        troppo_vecchio["published_at"] = (
+            riferimento
+            - timedelta(days=script.GIORNI_CONSERVAZIONE_STORICO)
+        ).isoformat()
+        futuro = evento(canonical_id="FUTURO")
+        futuro["published_at"] = (
+            riferimento + timedelta(days=1)
+        ).isoformat()
+
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "eventi.json"
+            percorso.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "events": [
+                            troppo_vecchio,
+                            al_limite,
+                            futuro,
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            nuovo = evento(canonical_id="NUOVO")
+            script.salva_nello_storico(
+                [nuovo],
+                riferimento.isoformat(),
+                percorso,
+            )
+            storico = script.carica_storico(percorso)
+
+        self.assertEqual(
+            {voce["canonical_id"] for voce in storico},
+            {"AL-LIMITE", "NUOVO"},
         )
 
 
