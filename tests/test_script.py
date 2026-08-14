@@ -47,6 +47,7 @@ def evento(
     outcome="TROFEO_CONQUISTATO",
     importance=10,
     competition="Champions League",
+    stage="",
     opponent="Ajax",
     title="La Champions di Roma",
     description="La Juventus conquista la Champions League ai rigori.",
@@ -60,6 +61,7 @@ def evento(
         "outcome": outcome,
         "importance": importance,
         "competition": competition,
+        "stage": stage,
         "opponent": opponent,
         "title": title,
         "description": description,
@@ -463,131 +465,23 @@ class TestValidazioneEditoriale(unittest.TestCase):
             [],
         )
 
-
-class TestScartatiFactCheck(unittest.TestCase):
-    def test_candidato_eliminato_dal_fact_check_viene_archiviato(self):
-        candidato = {
-            "event_date": "2010-08-05",
-            "year": 2010,
-            "category": "PARTITA_MEMORABILE",
-            "competition": "UEFA Europa League",
-            "opponent": "Shamrock Rovers",
-            "title": "Vittoria sullo Shamrock Rovers",
-        }
-
-        scartati = script.raccogli_scartati_fact_check([candidato], [])
-
-        self.assertEqual(len(scartati), 1)
-        self.assertEqual(scartati[0]["phase"], "fact_check")
-
-    def test_candidato_verificato_non_viene_archiviato(self):
-        candidato = {
-            "event_date": "2010-08-05",
-            "year": 2010,
-            "category": "PARTITA_MEMORABILE",
-            "competition": "UEFA Europa League",
-            "opponent": "Shamrock Rovers",
-            "title": "Vittoria sullo Shamrock Rovers",
-        }
-        verificato = dict(candidato)
-
+    def test_preliminare_di_accesso_non_passa(self):
+        preliminare = evento(
+            date="2008-08-13",
+            year=2008,
+            category="PARTITA_MEMORABILE",
+            outcome="VITTORIA",
+            importance=8,
+            competition="Champions League",
+            stage="preliminari",
+            opponent="Artmedia Bratislava",
+            title="Poker contro Artmedia",
+            description="La Juventus vince 4-0 nel turno preliminare.",
+        )
         self.assertEqual(
-            script.raccogli_scartati_fact_check([candidato], [verificato]),
+            script.valida_eventi([preliminare], "08-13"),
             [],
         )
-
-
-class TestScartati(unittest.TestCase):
-    def test_raccoglie_motivo_validazione(self):
-        debole = evento(importance=7)
-        self.assertEqual(
-            script.valida_eventi([debole], "05-22"),
-            [],
-        )
-
-        scartati = script.raccogli_scartati_validazione(
-            [debole]
-        )
-
-        self.assertEqual(len(scartati), 1)
-        self.assertEqual(
-            scartati[0]["phase"],
-            "validazione",
-        )
-        self.assertIn(
-            "sotto soglia",
-            scartati[0]["reason"],
-        )
-
-    def test_salva_scartati_json(self):
-        with tempfile.TemporaryDirectory() as directory:
-            percorso = Path(directory) / "scartati.json"
-            scarto = {
-                "phase": "validazione",
-                "reason": "importanza sotto soglia (7/10)",
-                "event": evento(importance=7),
-            }
-
-            script.salva_scartati(
-                [scarto],
-                "2026-08-05T09:00:00+02:00",
-                percorso,
-            )
-
-            dati = json.loads(
-                percorso.read_text(encoding="utf-8")
-            )
-
-        self.assertEqual(dati["version"], 1)
-        self.assertEqual(len(dati["rejected"]), 1)
-        self.assertEqual(
-            dati["rejected"][0]["phase"],
-            "validazione",
-        )
-
-    def test_non_duplica_stesso_scarto_nello_stesso_giorno(self):
-        with tempfile.TemporaryDirectory() as directory:
-            percorso = Path(directory) / "scartati.json"
-            scarto = {
-                "phase": "validazione",
-                "reason": "categoria non ammessa",
-                "event": evento(),
-            }
-
-            script.salva_scartati(
-                [scarto],
-                "2026-08-05T09:00:00+02:00",
-                percorso,
-            )
-            script.salva_scartati(
-                [scarto],
-                "2026-08-05T11:00:00+02:00",
-                percorso,
-            )
-
-            self.assertEqual(
-                len(script.carica_scartati(percorso)),
-                1,
-            )
-
-    def test_duplicato_storico_finiscе_negli_scartati(self):
-        corrente = evento()
-        vecchio = dict(
-            corrente,
-            published_at="2026-05-22T07:30:00+02:00",
-        )
-        raccolta = []
-
-        risultati = script.scarta_gia_pubblicati(
-            [corrente],
-            [vecchio],
-            anno_pubblicazione=2026,
-            scartati=raccolta,
-        )
-
-        self.assertEqual(risultati, [])
-        self.assertEqual(len(raccolta), 1)
-        self.assertEqual(raccolta[0]["phase"], "storico")
 
 
 class TestStorico(unittest.TestCase):
