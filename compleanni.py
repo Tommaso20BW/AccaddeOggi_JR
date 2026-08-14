@@ -209,7 +209,13 @@ def salva_storico(
     date_inviate.append(
         {
             "date": oggi.isoformat(),
-            "players": [giocatore["qid"] for giocatore in giocatori],
+            "players": [
+                {
+                    "name": giocatore["name"],
+                    "age": giocatore["age"],
+                }
+                for giocatore in giocatori
+            ],
             "sent_at": inviato_il,
         }
     )

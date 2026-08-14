@@ -4,7 +4,10 @@
     {
       "date": "2026-08-14",
       "players": [
-        "Q80306"
+        {
+          "name": "Giorgio Chiellini",
+          "age": 42
+        }
       ],
       "sent_at": "2026-08-14T15:55:34+02:00"
     }
