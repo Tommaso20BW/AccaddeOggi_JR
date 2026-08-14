@@ -3,7 +3,7 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,7 @@ WIKIDATA_USER_AGENT = (
     "(https://github.com/Tommaso20BW/AccaddeOggi_JR)"
 )
 JUVENTUS_QID = "Q1422"
+GIORNI_CONSERVAZIONE_STORICO = 400
 
 PERCORSO_STORICO = Path(
     os.environ.get(
@@ -201,11 +202,22 @@ def salva_storico(
     """Registra l'invio soltanto dopo la conferma di Telegram."""
     percorso = Path(percorso)
     storico = carica_storico(percorso)
-    date_inviate = [
-        voce
-        for voce in storico["sent_dates"]
-        if voce.get("date") != oggi.isoformat()
-    ]
+    data_minima = oggi - timedelta(
+        days=GIORNI_CONSERVAZIONE_STORICO - 1
+    )
+    date_inviate = []
+
+    for voce in storico["sent_dates"]:
+        try:
+            data_invio = date.fromisoformat(
+                str(voce.get("date", ""))
+            )
+        except ValueError:
+            continue
+
+        if data_minima <= data_invio < oggi:
+            date_inviate.append(voce)
+
     date_inviate.append(
         {
             "date": oggi.isoformat(),

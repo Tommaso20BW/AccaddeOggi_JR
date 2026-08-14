@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import urlparse
@@ -29,6 +29,7 @@ MODELLI_GEMINI_PREDEFINITI = (
 
 MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 8
+GIORNI_CONSERVAZIONE_STORICO = 400
 
 MAX_CICLI_GEMINI = max(
     1,
@@ -1125,6 +1126,21 @@ def _anno_pubblicazione(evento):
         return None
 
 
+def _data_pubblicazione(evento):
+    """Ricava la data completa in cui un evento è stato pubblicato."""
+    published_at = str(evento.get("published_at", "")).strip()
+
+    if not published_at:
+        return None
+
+    try:
+        return datetime.fromisoformat(
+            published_at.replace("Z", "+00:00")
+        ).date()
+    except ValueError:
+        return None
+
+
 def scarta_gia_pubblicati(
     eventi,
     storico,
@@ -1175,6 +1191,27 @@ def salva_nello_storico(
     percorso=PERCORSO_STORICO,
 ):
     storico = carica_storico(percorso)
+    data_pubblicazione = _data_pubblicazione(
+        {"published_at": pubblicato_il}
+    )
+
+    if data_pubblicazione is None:
+        raise RuntimeError(
+            "Data di pubblicazione dello storico non valida."
+        )
+
+    data_minima = data_pubblicazione - timedelta(
+        days=GIORNI_CONSERVAZIONE_STORICO - 1
+    )
+    storico = [
+        evento
+        for evento in storico
+        if (
+            (data_evento := _data_pubblicazione(evento))
+            is not None
+            and data_minima <= data_evento <= data_pubblicazione
+        )
+    ]
 
     for evento in eventi:
         storico.append(
