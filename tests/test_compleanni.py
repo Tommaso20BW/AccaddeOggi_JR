@@ -38,13 +38,27 @@ def risposta_wikidata():
 
 
 class TestWikidata(unittest.TestCase):
-    def test_query_filtra_data_juventus_viventi_e_precisione(self):
+    def test_query_filtra_data_juventus_viventi_e_rilevanza(self):
         query = compleanni.costruisci_query_wikidata(14, 8)
-        self.assertIn("wdt:P54 wd:Q1422", query)
+
+        self.assertIn("ps:P54 wd:Q1422", query)
         self.assertIn("MONTH(?birthDate) = 8", query)
         self.assertIn("DAY(?birthDate) = 14", query)
         self.assertIn("FILTER NOT EXISTS", query)
         self.assertIn("?birthPrecision >= 11", query)
+
+        # Rosa attuale: nessuna data di fine del rapporto con la Juventus.
+        self.assertIn(
+            "NOT EXISTS { ?juveStatement pq:P582 ?juveEnd. }",
+            query,
+        )
+
+        # Ex: solo se hanno almeno la soglia minima di presenze.
+        self.assertIn("pq:P1350 ?juveMatches", query)
+        self.assertIn(
+            f"?juveMatches >= {compleanni.SOGLIA_PRESENZE_EX}",
+            query,
+        )
 
     def test_interpreta_ordina_calcola_eta_e_deduplica(self):
         dati = risposta_wikidata()
