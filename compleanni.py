@@ -19,6 +19,11 @@ WIKIDATA_USER_AGENT = (
     "(https://github.com/Tommaso20BW/AccaddeOggi_JR)"
 )
 JUVENTUS_QID = "Q1422"
+
+# Gli attuali giocatori della Juventus vengono sempre inclusi.
+# Gli ex vengono inclusi solo se hanno almeno questa soglia di presenze.
+SOGLIA_PRESENZE_EX = 50
+
 GIORNI_CONSERVAZIONE_STORICO = 400
 
 PERCORSO_STORICO = Path(
@@ -45,17 +50,36 @@ MESI_ITALIANI = (
 
 
 def costruisci_query_wikidata(giorno, mese):
-    """Crea la query per i calciatori viventi passati dalla Juventus."""
+    """Crea la query per rosa attuale ed ex Juventus rilevanti."""
     return f"""
 SELECT DISTINCT ?player ?playerLabel ?birthDate WHERE {{
   ?player wdt:P31 wd:Q5;
-          wdt:P54 wd:{JUVENTUS_QID};
+          p:P54 ?juveStatement;
           p:P569 ?birthStatement.
+
+  ?juveStatement ps:P54 wd:{JUVENTUS_QID};
+                 wikibase:rank ?juveRank.
+
+  OPTIONAL {{ ?juveStatement pq:P1350 ?juveMatches. }}
 
   ?birthStatement psv:P569 ?birthNode;
                   wikibase:rank ?birthRank.
   ?birthNode wikibase:timeValue ?birthDate;
              wikibase:timePrecision ?birthPrecision.
+
+  FILTER(?juveRank != wikibase:DeprecatedRank)
+
+  # Passa se:
+  # 1) è ancora alla Juventus: nessuna data di fine nel rapporto col club;
+  # 2) è un ex con almeno SOGLIA_PRESENZE_EX presenze.
+  FILTER(
+    NOT EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
+    ||
+    (
+      BOUND(?juveMatches)
+      && ?juveMatches >= {SOGLIA_PRESENZE_EX}
+    )
+  )
 
   FILTER(?birthRank != wikibase:DeprecatedRank)
   FILTER(?birthPrecision >= 11)
@@ -168,9 +192,6 @@ def carica_storico(percorso=PERCORSO_STORICO):
         raise RuntimeError(
             f"Storico compleanni non leggibile: {percorso}"
         ) from exc
-
-    if not isinstance(dati, dict):
-        raise RuntimeError("Formato dello storico compleanni non valido.")
 
     if not isinstance(dati, dict):
         raise RuntimeError("Formato dello storico compleanni non valido.")
@@ -310,7 +331,8 @@ def main():
         return
 
     print(
-        "Cerco i compleanni dei giocatori ed ex giocatori Juventus..."
+        "Cerco i compleanni della rosa attuale "
+        "e degli ex Juventus rilevanti..."
     )
     giocatori = recupera_compleanni(oggi)
 
