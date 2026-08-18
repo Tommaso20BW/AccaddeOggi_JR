@@ -12,5 +12,22 @@
       "year": 2012,
       "title": "Vittoria della Supercoppa Italiana 2012"
     }
+  ],
+  "2026-08-18": [
+    {
+      "id": "1982|DEBUTTO_ICONICO|COPPA_ITALIA|MICHEL_PLATINI",
+      "year": 1982,
+      "title": "Debutto di Michel Platini"
+    },
+    {
+      "id": "2013|TROFEO|SUPERCOPPA_ITALIANA|LAZIO",
+      "year": 2013,
+      "title": "Sesta Supercoppa Italiana"
+    },
+    {
+      "id": "2018|DEBUTTO_ICONICO|SERIE_A|CRISTIANO_RONALDO",
+      "year": 2018,
+      "title": "Debutto di Cristiano Ronaldo"
+    }
   ]
 }
