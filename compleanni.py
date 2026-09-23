@@ -282,20 +282,23 @@ def formatta_messaggio(giocatori, oggi):
     data_italiana = f"{oggi.day} {MESI_ITALIANI[oggi.month - 1]}"
     righe = [
         f"<b>🎂 COMPLEANNI BIANCONERI | {data_italiana}</b>",
+        "",
     ]
 
-    for giocatore in giocatori:
+    # Prima i vivi, poi i giocatori scomparsi.
+    ordinati = sorted(
+        giocatori,
+        key=lambda giocatore: (
+            bool(giocatore.get("deceased")),
+            giocatore["name"].casefold(),
+        ),
+    )
+
+    for giocatore in ordinati:
         nome = html.escape(giocatore["name"])
         eta = giocatore["age"]
-
-        if giocatore.get("deceased"):
-            anno_morte = giocatore.get("death_year")
-            dettaglio_morte = f" · † {anno_morte}" if anno_morte else ""
-            righe.append(
-                f"🕊️ <b>{nome}</b> — avrebbe compiuto {eta} anni{dettaglio_morte}"
-            )
-        else:
-            righe.append(f"🎉 <b>{nome}</b> — {eta} anni")
+        emoji = "🕊️" if giocatore.get("deceased") else "🎉"
+        righe.append(f"{emoji} <b>{nome}</b> — {eta} anni")
 
     return "\n".join(righe)
 
