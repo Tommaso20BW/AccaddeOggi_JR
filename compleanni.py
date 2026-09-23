@@ -52,7 +52,7 @@ MESI_ITALIANI = (
 def costruisci_query_wikidata(giorno, mese):
     """Crea la query per rosa attuale ed ex Juventus rilevanti."""
     return f"""
-SELECT DISTINCT ?player ?playerLabel ?birthDate WHERE {{
+SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
   ?player wdt:P31 wd:Q5;
           p:P54 ?juveStatement;
           p:P569 ?birthStatement.
@@ -61,6 +61,7 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate WHERE {{
                  wikibase:rank ?juveRank.
 
   OPTIONAL {{ ?juveStatement pq:P1350 ?juveMatches. }}
+  OPTIONAL {{ ?player wdt:P570 ?deathDate. }}
 
   ?birthStatement psv:P569 ?birthNode;
                   wikibase:rank ?birthRank.
@@ -85,7 +86,6 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate WHERE {{
   FILTER(?birthPrecision >= 11)
   FILTER(MONTH(?birthDate) = {int(mese)})
   FILTER(DAY(?birthDate) = {int(giorno)})
-  FILTER NOT EXISTS {{ ?player wdt:P570 ?deathDate. }}
 
   SERVICE wikibase:label {{
     bd:serviceParam wikibase:language "it,en".
@@ -114,6 +114,7 @@ def interpreta_risposta_wikidata(dati, oggi):
         player = voce.get("player", {}).get("value", "").strip()
         nome = voce.get("playerLabel", {}).get("value", "").strip()
         nascita_raw = voce.get("birthDate", {}).get("value", "").strip()
+        morte_raw = voce.get("deathDate", {}).get("value", "").strip()
         qid = player.rstrip("/").rsplit("/", 1)[-1]
 
         if (
@@ -133,6 +134,13 @@ def interpreta_risposta_wikidata(dati, oggi):
         if nascita > oggi:
             continue
 
+        morte = None
+        if morte_raw:
+            try:
+                morte = _data_wikidata(morte_raw)
+            except ValueError:
+                morte = None
+
         qid_visti.add(qid)
         risultati.append(
             {
@@ -140,6 +148,9 @@ def interpreta_risposta_wikidata(dati, oggi):
                 "name": nome,
                 "birth_date": nascita.isoformat(),
                 "age": oggi.year - nascita.year,
+                "death_date": morte.isoformat() if morte else None,
+                "death_year": morte.year if morte else None,
+                "deceased": morte is not None,
                 "source_url": f"https://www.wikidata.org/wiki/{qid}",
             }
         )
@@ -250,6 +261,8 @@ def salva_storico(
         {
             "name": giocatore["name"],
             "age": giocatore["age"],
+            "deceased": giocatore.get("deceased", False),
+            "death_year": giocatore.get("death_year"),
         }
         for giocatore in giocatori
     ]
@@ -276,7 +289,15 @@ def formatta_messaggio(giocatori, oggi):
     for giocatore in giocatori:
         nome = html.escape(giocatore["name"])
         eta = giocatore["age"]
-        righe.append(f"🎉 <b>{nome}</b> — {eta} anni")
+
+        if giocatore.get("deceased"):
+            anno_morte = giocatore.get("death_year")
+            dettaglio_morte = f" · † {anno_morte}" if anno_morte else ""
+            righe.append(
+                f"🕊️ <b>{nome}</b> — avrebbe compiuto {eta} anni{dettaglio_morte}"
+            )
+        else:
+            righe.append(f"🎉 <b>{nome}</b> — {eta} anni")
 
     return "\n".join(righe)
 
