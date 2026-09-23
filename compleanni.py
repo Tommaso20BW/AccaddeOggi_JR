@@ -261,8 +261,6 @@ def salva_storico(
         {
             "name": giocatore["name"],
             "age": giocatore["age"],
-            "deceased": giocatore.get("deceased", False),
-            "death_year": giocatore.get("death_year"),
         }
         for giocatore in giocatori
     ]
