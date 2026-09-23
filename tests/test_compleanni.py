@@ -37,15 +37,42 @@ def risposta_wikidata():
     }
 
 
+def risposta_wikidata_con_deceduto():
+    return {
+        "results": {
+            "bindings": [
+                {
+                    "player": {
+                        "value": "http://www.wikidata.org/entity/Q221174"
+                    },
+                    "playerLabel": {"value": "Paolo Rossi"},
+                    "birthDate": {
+                        "value": "1956-09-23T00:00:00Z"
+                    },
+                    "deathDate": {
+                        "value": "2020-12-09T00:00:00Z"
+                    },
+                },
+            ]
+        }
+    }
+
+
 class TestWikidata(unittest.TestCase):
-    def test_query_filtra_data_juventus_viventi_e_rilevanza(self):
+    def test_query_filtra_data_juventus_e_rilevanza_ma_include_deceduti(self):
         query = compleanni.costruisci_query_wikidata(14, 8)
 
         self.assertIn("ps:P54 wd:Q1422", query)
         self.assertIn("MONTH(?birthDate) = 8", query)
         self.assertIn("DAY(?birthDate) = 14", query)
-        self.assertIn("FILTER NOT EXISTS", query)
         self.assertIn("?birthPrecision >= 11", query)
+
+        # La data di morte viene recuperata, non usata come filtro di esclusione.
+        self.assertIn("OPTIONAL { ?player wdt:P570 ?deathDate. }", query)
+        self.assertNotIn(
+            "FILTER NOT EXISTS { ?player wdt:P570 ?deathDate. }",
+            query,
+        )
 
         # Rosa attuale: nessuna data di fine del rapporto con la Juventus.
         self.assertIn(
@@ -73,6 +100,20 @@ class TestWikidata(unittest.TestCase):
         self.assertEqual(giocatori[0]["name"], "Andrea & Bianchi")
         self.assertEqual(giocatori[0]["age"], 26)
         self.assertEqual(giocatori[1]["age"], 46)
+        self.assertFalse(giocatori[0]["deceased"])
+        self.assertFalse(giocatori[1]["deceased"])
+
+    def test_interpreta_deceduto_mantiene_anno_morte(self):
+        giocatori = compleanni.interpreta_risposta_wikidata(
+            risposta_wikidata_con_deceduto(),
+            date(2026, 9, 23),
+        )
+
+        self.assertEqual(len(giocatori), 1)
+        self.assertEqual(giocatori[0]["name"], "Paolo Rossi")
+        self.assertEqual(giocatori[0]["age"], 70)
+        self.assertTrue(giocatori[0]["deceased"])
+        self.assertEqual(giocatori[0]["death_year"], 2020)
 
     def test_recupera_compleanni_usa_endpoint_json(self):
         context_manager = MagicMock()
@@ -116,6 +157,21 @@ class TestFormattazione(unittest.TestCase):
             "🎉 <b>Mario Rossi</b> — 46 anni",
         )
 
+    def test_messaggio_deceduto_resta_nello_stesso_elenco(self):
+        giocatori = compleanni.interpreta_risposta_wikidata(
+            risposta_wikidata_con_deceduto(),
+            date(2026, 9, 23),
+        )
+        testo = compleanni.formatta_messaggio(
+            giocatori,
+            date(2026, 9, 23),
+        )
+        self.assertEqual(
+            testo,
+            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n"
+            "🕊️ <b>Paolo Rossi</b> — avrebbe compiuto 70 anni · † 2020",
+        )
+
 
 class TestStorico(unittest.TestCase):
     def test_salva_e_impedisce_doppio_invio(self):
@@ -150,6 +206,30 @@ class TestStorico(unittest.TestCase):
         )
         self.assertFalse(
             compleanni.gia_inviato(date(2026, 8, 15), storico)
+        )
+
+    def test_salva_deceduto_mantiene_storico_compatto(self):
+        with tempfile.TemporaryDirectory() as directory:
+            percorso = Path(directory) / "storico.json"
+            giocatori = compleanni.interpreta_risposta_wikidata(
+                risposta_wikidata_con_deceduto(),
+                date(2026, 9, 23),
+            )
+            compleanni.salva_storico(
+                date(2026, 9, 23),
+                giocatori,
+                percorso,
+            )
+            storico = compleanni.carica_storico(percorso)
+
+        self.assertEqual(
+            storico["2026-09-23"],
+            [
+                {
+                    "name": "Paolo Rossi",
+                    "age": 70,
+                }
+            ],
         )
 
     def test_salvataggio_mantiene_solo_ultimi_400_giorni(self):
