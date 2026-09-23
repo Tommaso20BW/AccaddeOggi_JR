@@ -152,7 +152,7 @@ class TestFormattazione(unittest.TestCase):
         )
         self.assertEqual(
             testo,
-            "<b>🎂 COMPLEANNI BIANCONERI | 14 AGOSTO</b>\n\n"
+            "<b>🎂 COMPLEANNI | 14 AGOSTO</b>\n\n"
             "🎉 <b>Andrea &amp; Bianchi</b> — 26 anni\n"
             "🎉 <b>Mario Rossi</b> — 46 anni",
         )
@@ -176,7 +176,7 @@ class TestFormattazione(unittest.TestCase):
         )
         self.assertEqual(
             testo,
-            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n\n"
+            "<b>🎂 COMPLEANNI | 23 SETTEMBRE</b>\n\n"
             "🎉 <b>Rocco Pagano</b> — 63 anni\n"
             "🕊️ <b>Paolo Rossi</b> — 70 anni",
         )
@@ -192,7 +192,7 @@ class TestFormattazione(unittest.TestCase):
         )
         self.assertEqual(
             testo,
-            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n\n"
+            "<b>🎂 COMPLEANNI | 23 SETTEMBRE</b>\n\n"
             "🕊️ <b>Paolo Rossi</b> — 70 anni",
         )
 
