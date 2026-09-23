@@ -152,9 +152,33 @@ class TestFormattazione(unittest.TestCase):
         )
         self.assertEqual(
             testo,
-            "<b>🎂 COMPLEANNI BIANCONERI | 14 AGOSTO</b>\n"
+            "<b>🎂 COMPLEANNI BIANCONERI | 14 AGOSTO</b>\n\n"
             "🎉 <b>Andrea &amp; Bianchi</b> — 26 anni\n"
             "🎉 <b>Mario Rossi</b> — 46 anni",
+        )
+
+    def test_vivi_prima_dei_deceduti(self):
+        giocatori = [
+            {
+                "name": "Paolo Rossi",
+                "age": 70,
+                "deceased": True,
+            },
+            {
+                "name": "Rocco Pagano",
+                "age": 63,
+                "deceased": False,
+            },
+        ]
+        testo = compleanni.formatta_messaggio(
+            giocatori,
+            date(2026, 9, 23),
+        )
+        self.assertEqual(
+            testo,
+            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n\n"
+            "🎉 <b>Rocco Pagano</b> — 63 anni\n"
+            "🕊️ <b>Paolo Rossi</b> — 70 anni",
         )
 
     def test_messaggio_deceduto_resta_nello_stesso_elenco(self):
@@ -168,8 +192,8 @@ class TestFormattazione(unittest.TestCase):
         )
         self.assertEqual(
             testo,
-            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n"
-            "🕊️ <b>Paolo Rossi</b> — avrebbe compiuto 70 anni · † 2020",
+            "<b>🎂 COMPLEANNI BIANCONERI | 23 SETTEMBRE</b>\n\n"
+            "🕊️ <b>Paolo Rossi</b> — 70 anni",
         )
 
 
