@@ -281,7 +281,7 @@ def salva_storico(
 def formatta_messaggio(giocatori, oggi):
     data_italiana = f"{oggi.day} {MESI_ITALIANI[oggi.month - 1]}"
     righe = [
-        f"<b>🎂 COMPLEANNI BIANCONERI | {data_italiana}</b>",
+        f"<b>🎂 COMPLEANNI | {data_italiana}</b>",
         "",
     ]
 
