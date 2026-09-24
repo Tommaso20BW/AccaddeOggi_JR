@@ -10,10 +10,9 @@ from zoneinfo import ZoneInfo
 
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
 WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
-WIKIDATA_TIMEOUT = max(
-    5,
-    int(os.environ.get("WIKIDATA_TIMEOUT", "30")),
-)
+WIKIDATA_TIMEOUT = max(5, int(os.environ.get("WIKIDATA_TIMEOUT", "60")))
+WIKIDATA_MAX_TENTATIVI = max(1, int(os.environ.get("WIKIDATA_MAX_TENTATIVI", "3")))
+WIKIDATA_ATTESA_RETRY = max(0, int(os.environ.get("WIKIDATA_ATTESA_RETRY", "5")))
 WIKIDATA_USER_AGENT = (
     "AccaddeOggi-Juventus-Birthday-Bot/1.0 "
     "(https://github.com/Tommaso20BW/AccaddeOggi_JR)"
@@ -181,13 +180,21 @@ def recupera_compleanni(oggi):
         },
     )
 
-    with urllib.request.urlopen(
-        richiesta,
-        timeout=WIKIDATA_TIMEOUT,
-    ) as risposta:
-        dati = json.loads(risposta.read().decode("utf-8"))
-
-    return interpreta_risposta_wikidata(dati, oggi)
+    ultimo_errore = None
+    for tentativo in range(1, WIKIDATA_MAX_TENTATIVI + 1):
+        try:
+            with urllib.request.urlopen(richiesta, timeout=WIKIDATA_TIMEOUT) as risposta:
+                dati = json.loads(risposta.read().decode("utf-8"))
+            return interpreta_risposta_wikidata(dati, oggi)
+        except (OSError, TimeoutError, json.JSONDecodeError) as exc:
+            ultimo_errore = exc
+            if tentativo >= WIKIDATA_MAX_TENTATIVI:
+                break
+            print(f"Wikidata non ha risposto al tentativo {tentativo}/{WIKIDATA_MAX_TENTATIVI}: {exc}. Riprovo tra {WIKIDATA_ATTESA_RETRY}s...")
+            if WIKIDATA_ATTESA_RETRY:
+                import time
+                time.sleep(WIKIDATA_ATTESA_RETRY)
+    raise RuntimeError(f"Wikidata non disponibile dopo {WIKIDATA_MAX_TENTATIVI} tentativi: {ultimo_errore}") from ultimo_errore
 
 
 def carica_storico(percorso=PERCORSO_STORICO):
