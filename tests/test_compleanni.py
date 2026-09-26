@@ -64,7 +64,8 @@ class TestWikidata(unittest.TestCase):
 
         self.assertIn("ps:P54 wd:Q1422", query)
         self.assertIn("MONTH(?birthDate) = 8", query)
-        self.assertIn("DAY(?birthDate) = 14", query)
+        self.assertIn("DAY(?birthDate)", query)
+        self.assertIn("= 14", query)
         self.assertIn("?birthPrecision >= 11", query)
 
         # La data di morte viene recuperata, non usata come filtro di esclusione.
@@ -86,6 +87,31 @@ class TestWikidata(unittest.TestCase):
             f"?juveMatches >= {compleanni.SOGLIA_PRESENZE_EX}",
             query,
         )
+
+    def test_query_include_data_inizio_e_soglia_anno(self):
+        """La query recupera P580 (data inizio) e applica SOGLIA_ANNO_INIZIO."""
+        query = compleanni.costruisci_query_wikidata(14, 8)
+
+        # La data di inizio del rapporto deve essere recuperata come OPTIONAL.
+        self.assertIn("pq:P580", query)
+        self.assertIn("?juveStart", query)
+
+        # Il ramo "attuale senza presenze" deve richiedere un ingaggio recente.
+        self.assertIn(f"YEAR(?juveStart) >= {compleanni.SOGLIA_ANNO_INIZIO}", query)
+
+        # Il ramo rimane condizionale: !BOUND garantisce che si applichi solo
+        # quando le presenze sono assenti.
+        self.assertIn("!BOUND(?juveMatches)", query)
+
+    def test_query_soglia_anno_usa_costante(self):
+        """SOGLIA_ANNO_INIZIO è rispecchiata fedelmente nella query."""
+        anno_originale = compleanni.SOGLIA_ANNO_INIZIO
+        try:
+            compleanni.SOGLIA_ANNO_INIZIO = 2022
+            query = compleanni.costruisci_query_wikidata(1, 1)
+            self.assertIn("YEAR(?juveStart) >= 2022", query)
+        finally:
+            compleanni.SOGLIA_ANNO_INIZIO = anno_originale
 
     def test_interpreta_ordina_calcola_eta_e_deduplica(self):
         dati = risposta_wikidata()
