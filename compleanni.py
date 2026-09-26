@@ -70,12 +70,27 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
   FILTER(?juveRank != wikibase:DeprecatedRank)
 
   # Passa se:
-  # 1) è ancora alla Juventus: nessuna data di fine nel rapporto col club;
+  # 1) è ancora alla Juventus, ma solo se il dato delle presenze
+  #    non lo identifica come appartenente al vivaio/settore giovanile;
   # 2) è un ex con almeno SOGLIA_PRESENZE_EX presenze.
+  #
+  # Un rapporto P54 senza data di fine non è sufficiente da solo:
+  # Wikidata contiene infatti alcuni vecchi rapporti del settore giovanile
+  # registrati come Juventus FC. Se quel rapporto ha un numero di presenze
+  # noto inferiore alla soglia, non viene considerato prima squadra.
   FILTER(
-    NOT EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
+    (
+      NOT EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
+      &&
+      (
+        !BOUND(?juveMatches)
+        || ?juveMatches >= {SOGLIA_PRESENZE_EX}
+      )
+    )
     ||
     (
+      EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
+      &&
       BOUND(?juveMatches)
       && ?juveMatches >= {SOGLIA_PRESENZE_EX}
     )
