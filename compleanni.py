@@ -7,8 +7,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
+
 WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIDATA_TIMEOUT = max(5, int(os.environ.get("WIKIDATA_TIMEOUT", "60")))
 WIKIDATA_MAX_TENTATIVI = max(1, int(os.environ.get("WIKIDATA_MAX_TENTATIVI", "3")))
@@ -17,11 +17,18 @@ WIKIDATA_USER_AGENT = (
     "AccaddeOggi-Juventus-Birthday-Bot/1.0 "
     "(https://github.com/Tommaso20BW/AccaddeOggi_JR)"
 )
+
 JUVENTUS_QID = "Q1422"
 
 # Gli attuali giocatori della Juventus vengono sempre inclusi.
 # Gli ex vengono inclusi solo se hanno almeno questa soglia di presenze.
 SOGLIA_PRESENZE_EX = 50
+
+# I giocatori attuali senza dati sulle presenze vengono inclusi solo se il
+# loro ingaggio alla Juventus ha una data di inizio (P580) pari o successiva
+# a questo anno. Evita che vecchie voci Wikidata mai chiuse (settore giovanile,
+# ex senza data di fine) passino il filtro come "rosa attuale".
+SOGLIA_ANNO_INIZIO = max(2000, int(os.environ.get("SOGLIA_ANNO_INIZIO", "2020")))
 
 GIORNI_CONSERVAZIONE_STORICO = 400
 
@@ -52,6 +59,7 @@ def costruisci_query_wikidata(giorno, mese):
     """Crea la query per rosa attuale ed ex Juventus rilevanti."""
     return f"""
 SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
+
   ?player wdt:P31 wd:Q5;
           p:P54 ?juveStatement;
           p:P569 ?birthStatement.
@@ -60,6 +68,7 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
                  wikibase:rank ?juveRank.
 
   OPTIONAL {{ ?juveStatement pq:P1350 ?juveMatches. }}
+  OPTIONAL {{ ?juveStatement pq:P580  ?juveStart.  }}
   OPTIONAL {{ ?player wdt:P570 ?deathDate. }}
 
   ?birthStatement psv:P569 ?birthNode;
@@ -70,28 +79,29 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
   FILTER(?juveRank != wikibase:DeprecatedRank)
 
   # Passa se:
-  # 1) è ancora alla Juventus, ma solo se il dato delle presenze
-  #    non lo identifica come appartenente al vivaio/settore giovanile;
+  # 1) è ancora alla Juventus (nessuna data di fine) e ha presenze note >=
+  #    soglia, oppure non ha presenze ma il rapporto ha una data di inizio
+  #    recente (nuova firma); questo blocca le vecchie voci Wikidata mai
+  #    chiuse del settore giovanile che non hanno né fine né presenze.
   # 2) è un ex con almeno SOGLIA_PRESENZE_EX presenze.
-  #
-  # Un rapporto P54 senza data di fine non è sufficiente da solo:
-  # Wikidata contiene infatti alcuni vecchi rapporti del settore giovanile
-  # registrati come Juventus FC. Se quel rapporto ha un numero di presenze
-  # noto inferiore alla soglia, non viene considerato prima squadra.
   FILTER(
     (
       NOT EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
       &&
       (
-        !BOUND(?juveMatches)
-        || ?juveMatches >= {SOGLIA_PRESENZE_EX}
+        ( BOUND(?juveMatches) && ?juveMatches >= {SOGLIA_PRESENZE_EX} )
+        ||
+        (
+          !BOUND(?juveMatches)
+          && BOUND(?juveStart)
+          && YEAR(?juveStart) >= {SOGLIA_ANNO_INIZIO}
+        )
       )
     )
     ||
     (
       EXISTS {{ ?juveStatement pq:P582 ?juveEnd. }}
-      &&
-      BOUND(?juveMatches)
+      && BOUND(?juveMatches)
       && ?juveMatches >= {SOGLIA_PRESENZE_EX}
     )
   )
@@ -99,7 +109,7 @@ SELECT DISTINCT ?player ?playerLabel ?birthDate ?deathDate WHERE {{
   FILTER(?birthRank != wikibase:DeprecatedRank)
   FILTER(?birthPrecision >= 11)
   FILTER(MONTH(?birthDate) = {int(mese)})
-  FILTER(DAY(?birthDate) = {int(giorno)})
+  FILTER(DAY(?birthDate)   = {int(giorno)})
 
   SERVICE wikibase:label {{
     bd:serviceParam wikibase:language "it,en".
@@ -112,10 +122,8 @@ ORDER BY ?birthDate ?playerLabel
 def _data_wikidata(valore):
     """Converte la data Wikidata ISO in una data Python."""
     testo = valore.strip()
-
     if testo.startswith("+"):
         testo = testo[1:]
-
     return date.fromisoformat(testo[:10])
 
 
@@ -129,6 +137,7 @@ def interpreta_risposta_wikidata(dati, oggi):
         nome = voce.get("playerLabel", {}).get("value", "").strip()
         nascita_raw = voce.get("birthDate", {}).get("value", "").strip()
         morte_raw = voce.get("deathDate", {}).get("value", "").strip()
+
         qid = player.rstrip("/").rsplit("/", 1)[-1]
 
         if (
@@ -181,12 +190,14 @@ def interpreta_risposta_wikidata(dati, oggi):
 def recupera_compleanni(oggi):
     """Interroga Wikidata per i compleanni Juventus della data indicata."""
     query = costruisci_query_wikidata(oggi.day, oggi.month)
+
     parametri = urllib.parse.urlencode(
         {
             "query": query,
             "format": "json",
         }
     )
+
     richiesta = urllib.request.Request(
         f"{WIKIDATA_ENDPOINT}?{parametri}",
         headers={
@@ -196,20 +207,33 @@ def recupera_compleanni(oggi):
     )
 
     ultimo_errore = None
+
     for tentativo in range(1, WIKIDATA_MAX_TENTATIVI + 1):
         try:
             with urllib.request.urlopen(richiesta, timeout=WIKIDATA_TIMEOUT) as risposta:
                 dati = json.loads(risposta.read().decode("utf-8"))
             return interpreta_risposta_wikidata(dati, oggi)
+
         except (OSError, TimeoutError, json.JSONDecodeError) as exc:
             ultimo_errore = exc
+
             if tentativo >= WIKIDATA_MAX_TENTATIVI:
                 break
-            print(f"Wikidata non ha risposto al tentativo {tentativo}/{WIKIDATA_MAX_TENTATIVI}: {exc}. Riprovo tra {WIKIDATA_ATTESA_RETRY}s...")
+
+            print(
+                f"Wikidata non ha risposto al tentativo "
+                f"{tentativo}/{WIKIDATA_MAX_TENTATIVI}: {exc}. "
+                f"Riprovo tra {WIKIDATA_ATTESA_RETRY}s..."
+            )
+
             if WIKIDATA_ATTESA_RETRY:
                 import time
                 time.sleep(WIKIDATA_ATTESA_RETRY)
-    raise RuntimeError(f"Wikidata non disponibile dopo {WIKIDATA_MAX_TENTATIVI} tentativi: {ultimo_errore}") from ultimo_errore
+
+    raise RuntimeError(
+        f"Wikidata non disponibile dopo {WIKIDATA_MAX_TENTATIVI} tentativi: "
+        f"{ultimo_errore}"
+    ) from ultimo_errore
 
 
 def carica_storico(percorso=PERCORSO_STORICO):
@@ -265,9 +289,11 @@ def salva_storico(
     """Registra l'invio soltanto dopo la conferma di Telegram."""
     percorso = Path(percorso)
     storico = carica_storico(percorso)
+
     data_minima = oggi - timedelta(
         days=GIORNI_CONSERVAZIONE_STORICO - 1
     )
+
     date_inviate = {}
 
     for data_testo, giocatori_salvati in storico.items():
@@ -286,6 +312,7 @@ def salva_storico(
         }
         for giocatore in giocatori
     ]
+
     date_inviate = dict(sorted(date_inviate.items()))
 
     percorso.parent.mkdir(parents=True, exist_ok=True)
@@ -302,6 +329,7 @@ def salva_storico(
 
 def formatta_messaggio(giocatori, oggi):
     data_italiana = f"{oggi.day} {MESI_ITALIANI[oggi.month - 1]}"
+
     righe = [
         f"<b>🎂 COMPLEANNI | {data_italiana}</b>",
         "",
@@ -331,7 +359,6 @@ def invia_a_telegram(testo):
     chat_id = os.environ.get("TELEGRAM_TO_BOT", "").strip()
 
     mancanti = []
-
     if not token:
         mancanti.append("TELEGRAM_TOKEN")
     if not chat_id:
@@ -343,6 +370,7 @@ def invia_a_telegram(testo):
         )
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+
     payload = urllib.parse.urlencode(
         {
             "chat_id": chat_id,
@@ -351,6 +379,7 @@ def invia_a_telegram(testo):
             "disable_web_page_preview": True,
         }
     ).encode("utf-8")
+
     richiesta = urllib.request.Request(url, data=payload)
 
     with urllib.request.urlopen(richiesta, timeout=30) as risposta:
@@ -366,6 +395,7 @@ def invia_a_telegram(testo):
 
 def main():
     oggi = datetime.now(FUSO_ORARIO).date()
+
     storico = carica_storico()
 
     if gia_inviato(oggi, storico):
@@ -378,6 +408,7 @@ def main():
         "Cerco i compleanni della rosa attuale "
         "e degli ex Juventus rilevanti..."
     )
+
     giocatori = recupera_compleanni(oggi)
 
     if not giocatori:
@@ -385,12 +416,15 @@ def main():
         return
 
     messaggio = formatta_messaggio(giocatori, oggi)
+
     print(f"Compleanni trovati: {len(giocatori)}. Invio a Telegram...")
     invia_a_telegram(messaggio)
+
     salva_storico(
         oggi,
         giocatori,
     )
+
     print("Compleanni inviati con successo e registrati nello storico!")
 
 
