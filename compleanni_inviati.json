@@ -196,5 +196,19 @@
       "name": "Zlatan Ibrahimović",
       "age": 45
     }
+  ],
+  "2026-10-04": [
+    {
+      "name": "Antonello Cuccureddu",
+      "age": 77
+    },
+    {
+      "name": "Mauro Camoranesi",
+      "age": 50
+    },
+    {
+      "name": "Oreste Barale",
+      "age": 122
+    }
   ]
 }
