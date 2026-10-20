@@ -169,5 +169,17 @@
       "year": 1986,
       "title": "L'ultima rete di Platini"
     }
+  ],
+  "2026-10-20": [
+    {
+      "id": "1970|PARTITA_MEMORABILE|COPPA_DELLE_FIERE|BARCELLONA",
+      "year": 1970,
+      "title": "Vittoria storica al Camp Nou"
+    },
+    {
+      "id": "1996|TRAGUARDO_STORICO|SERIE_A|ZINEDINE_ZIDANE",
+      "year": 1996,
+      "title": "Primo gol di Zidane"
+    }
   ]
 }
