@@ -288,5 +288,19 @@
       "name": "Romeo Benetti",
       "age": 81
     }
+  ],
+  "2026-10-22": [
+    {
+      "name": "Cesare Nay",
+      "age": 101
+    },
+    {
+      "name": "Francesco Cergoli",
+      "age": 105
+    },
+    {
+      "name": "Gianpietro Marchetti",
+      "age": 80
+    }
   ]
 }
