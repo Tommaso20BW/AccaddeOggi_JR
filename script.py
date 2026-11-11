@@ -55,6 +55,8 @@ SERPER_NUM_RISULTATI = max(
     5,
     min(20, int(os.environ.get("SERPER_NUM_RISULTATI", "10"))),
 )
+# Tempo massimo di una risposta di Gemini: se un modello non risponde si passa al successivo.
+GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "180"))   # secondi
 SERPER_TIMEOUT = max(
     5,
     int(os.environ.get("SERPER_TIMEOUT", "20")),
@@ -472,6 +474,7 @@ def _config_senza_ricerca(system_instruction):
         system_instruction=system_instruction,
         temperature=0,
         response_mime_type="application/json",
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT * 1000),
     )
 
 
