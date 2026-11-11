@@ -84,6 +84,8 @@ class TestConfigurazione(unittest.TestCase):
                 (
                     "gemini-3.8-flash",
                     "gemini-3.6-flash",
+                    "gemini-3-flash",
+                    "gemini-2.5-flash",
                     "gemini-3.5-flash-lite",
                 ),
             )
@@ -94,7 +96,7 @@ class TestConfigurazione(unittest.TestCase):
                 "models/gemini-3.8-flash-tts", "models/gemini-3.1-pro-preview"]
         self.assertEqual(
             script.scegli_modelli_gemini(nomi),
-            ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
+            ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"),
         )
 
     def test_con_client_usa_l_elenco_di_google(self):

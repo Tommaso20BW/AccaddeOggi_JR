@@ -26,10 +26,12 @@ FUSO_ORARIO = ZoneInfo("Europe/Rome")
 MODELLI_GEMINI_PREDEFINITI = (
     "gemini-3.8-flash",
     "gemini-3.6-flash",
+    "gemini-3-flash",
+    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
 )
 # Scelta automatica: i Flash stabili più recenti, poi i Flash-Lite come riserva.
-MODELLI_FLASH_AUTOMATICI = 2
+MODELLI_FLASH_AUTOMATICI = 5   # ogni Flash ha la sua quota gratuita: se il più nuovo è occupato, i precedenti
 MODELLI_LITE_AUTOMATICI = 1
 _ESCLUSI_AUTOMATICI = ("preview", "exp", "tts", "live", "audio", "image", "embedding",
                        "transcribe", "translate", "omni", "robotics", "computer", "thinking")
