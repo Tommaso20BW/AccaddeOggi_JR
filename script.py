@@ -21,11 +21,19 @@ from google.genai import types
 ORA_INVIO = (7, 30)
 FUSO_ORARIO = ZoneInfo("Europe/Rome")
 
+# Modelli di riserva (novembre 2026), usati solo se Google non risponde con l'elenco
+# dei modelli. Di norma il bot li sceglie da solo: vedi modelli_gemini_automatici().
 MODELLI_GEMINI_PREDEFINITI = (
+    "gemini-3.8-flash",
     "gemini-3.6-flash",
-    "gemini-2.5-flash",
     "gemini-3.5-flash-lite",
 )
+# Scelta automatica: i Flash stabili più recenti, poi i Flash-Lite come riserva.
+MODELLI_FLASH_AUTOMATICI = 2
+MODELLI_LITE_AUTOMATICI = 1
+_ESCLUSI_AUTOMATICI = ("preview", "exp", "tts", "live", "audio", "image", "embedding",
+                       "transcribe", "translate", "omni", "robotics", "computer", "thinking")
+_MODELLO_STABILE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash|flash-lite)$")
 
 MASSIMO_EVENTI = 3
 SOGLIA_IMPORTANZA = 8
@@ -110,8 +118,50 @@ class Rubrica:
     eventi: list[dict]
 
 
-def modelli_gemini_configurati():
-    """Restituisce la catena ordinata di modelli, senza duplicati."""
+def scegli_modelli_gemini(nomi):
+    """Dai nomi dei modelli disponibili: i Flash stabili più recenti, poi i Flash-Lite."""
+    trovati = {"flash": [], "flash-lite": []}
+    for nome in nomi:
+        nome = str(nome).removeprefix("models/")
+        if any(parola in nome for parola in _ESCLUSI_AUTOMATICI):
+            continue
+        corrisponde = _MODELLO_STABILE.match(nome)
+        if corrisponde:
+            versione = tuple(int(n) for n in corrisponde.group(1).split("."))
+            trovati[corrisponde.group(2)].append((versione, nome))
+    return tuple(
+        [nome for _, nome in sorted(trovati["flash"], reverse=True)[:MODELLI_FLASH_AUTOMATICI]]
+        + [nome for _, nome in sorted(trovati["flash-lite"], reverse=True)[:MODELLI_LITE_AUTOMATICI]]
+    )
+
+
+def modelli_gemini_automatici(client):
+    """Chiede a Google i modelli disponibili e sceglie i più adatti. Se l'elenco non
+    arriva (o non contiene modelli adatti) restituisce quelli di riserva."""
+    try:
+        nomi = [
+            modello.name for modello in client.models.list()
+            if not getattr(modello, "supported_actions", None)
+            or "generateContent" in modello.supported_actions
+        ]
+        scelti = scegli_modelli_gemini(nomi)
+    except Exception as exc:
+        print(
+            "Elenco dei modelli Gemini non disponibile "
+            f"({type(exc).__name__}): uso quelli di riserva."
+        )
+        scelti = ()
+    if not scelti:
+        return tuple(MODELLI_GEMINI_PREDEFINITI)
+    print("Modelli Gemini scelti in automatico da Google: " + ", ".join(scelti))
+    return scelti
+
+
+def modelli_gemini_configurati(client=None):
+    """Restituisce la catena ordinata di modelli, senza duplicati.
+
+    GEMINI_MODELS (o GEMINI_MODEL) nel workflow fissa i modelli a mano; altrimenti,
+    con un client, il bot li sceglie da solo fra quelli che Google offre."""
     elenco = os.environ.get("GEMINI_MODELS")
 
     if elenco is not None:
@@ -126,9 +176,14 @@ def modelli_gemini_configurati():
             )
     else:
         modello_legacy = os.environ.get("GEMINI_MODEL", "").strip()
+        predefiniti = (
+            modelli_gemini_automatici(client)
+            if client is not None
+            else MODELLI_GEMINI_PREDEFINITI
+        )
         modelli = (
             ([modello_legacy] if modello_legacy else [])
-            + list(MODELLI_GEMINI_PREDEFINITI)
+            + list(predefiniti)
         )
 
     return tuple(dict.fromkeys(modelli))
@@ -544,6 +599,16 @@ def _query_scoperta(data_italiana):
     ]
 
 
+def _query_scoperta_extra(data_italiana):
+    """Seconda ricerca, solo se la prima non ha dato candidati: parole diverse."""
+    data = data_italiana.lower()
+    return [
+        f'Juve "{data}" accadde oggi bianconeri',
+        f'Juventus "{data}" vittoria storica anniversario',
+        f'"{data}" Juventus Champions League Serie A storia bianconera',
+    ]
+
+
 def _query_verifica(candidati):
     queries = []
 
@@ -588,17 +653,34 @@ def scopri_candidati(
     data_italiana,
     models=None,
 ):
-    """Trova candidati usando Serper e li fa analizzare da Gemini."""
+    """Trova candidati usando Serper e li fa analizzare da Gemini.
+
+    Se la prima ricerca non dà candidati, ne fa una seconda con altre parole e fa
+    rileggere a Gemini tutte le fonti insieme (a volte la prima lettura non trova
+    eventi che nelle fonti ci sono)."""
     fonti = _cerca_fonti(
         _query_scoperta(data_italiana)
     )
+    eventi = _analizza_fonti(client, fonti, giorno_mese, data_italiana, models) if fonti else []
+    if eventi:
+        return eventi
 
-    if not fonti:
+    print("[Ricerca] Nessun candidato: secondo tentativo con altre ricerche...")
+    url_noti = {fonte.get("link") for fonte in fonti if isinstance(fonte, dict)}
+    extra = [
+        fonte for fonte in _cerca_fonti(_query_scoperta_extra(data_italiana))
+        if not (isinstance(fonte, dict) and fonte.get("link") in url_noti)
+    ]
+    if not fonti and not extra:
         print(
             "[Ricerca] Nessuna fonte trovata: nessun candidato."
         )
         return []
+    return _analizza_fonti(client, fonti + extra, giorno_mese, data_italiana, models)
 
+
+def _analizza_fonti(client, fonti, giorno_mese, data_italiana, models=None):
+    """Gemini legge le fonti e propone i candidati."""
     istruzioni = """
 Sei un ricercatore di storia della Juventus. Devi analizzare esclusivamente
 i risultati di ricerca forniti nel prompt. Non usare conoscenze esterne e
@@ -1369,7 +1451,7 @@ def prepara_accadde_oggi(
     )
 
     client = client or Client()
-    modelli = modelli_gemini_configurati()
+    modelli = modelli_gemini_configurati(client)
 
     print(
         "Catena modelli Gemini: "

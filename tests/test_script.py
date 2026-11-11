@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 
 # Permette di eseguire i test anche in un ambiente locale dove google-genai
@@ -82,11 +82,33 @@ class TestConfigurazione(unittest.TestCase):
             self.assertEqual(
                 script.modelli_gemini_configurati(),
                 (
+                    "gemini-3.8-flash",
                     "gemini-3.6-flash",
-                    "gemini-2.5-flash",
                     "gemini-3.5-flash-lite",
                 ),
             )
+
+    def test_sceglie_da_solo_i_modelli_piu_recenti(self):
+        nomi = ["models/gemini-3.8-flash", "models/gemini-3.6-flash", "models/gemini-3-flash-preview",
+                "models/gemini-3.5-flash-lite", "models/gemini-3.1-flash-lite", "models/gemini-2.5-flash",
+                "models/gemini-3.8-flash-tts", "models/gemini-3.1-pro-preview"]
+        self.assertEqual(
+            script.scegli_modelli_gemini(nomi),
+            ("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
+        )
+
+    def test_con_client_usa_l_elenco_di_google(self):
+        modelli = [SimpleNamespace(name="models/gemini-4.0-flash", supported_actions=["generateContent"]),
+                   SimpleNamespace(name="models/gemini-4.0-flash-lite", supported_actions=["generateContent"])]
+        client = SimpleNamespace(models=SimpleNamespace(list=Mock(return_value=modelli)))
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(script.modelli_gemini_configurati(client),
+                             ("gemini-4.0-flash", "gemini-4.0-flash-lite"))
+
+    def test_senza_elenco_usa_i_modelli_di_riserva(self):
+        client = SimpleNamespace(models=SimpleNamespace(list=Mock(side_effect=RuntimeError("rete"))))
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(script.modelli_gemini_configurati(client), script.MODELLI_GEMINI_PREDEFINITI)
 
     def test_gemini_models_personalizzati(self):
         with patch.dict(
@@ -309,6 +331,25 @@ class TestScopertaVerifica(unittest.TestCase):
 
         self.assertEqual(eventi, [])
         client.models.generate_content.assert_not_called()
+
+    def test_senza_candidati_fa_una_seconda_ricerca(self):
+        prima = [{"query": "q", "link": "https://a.example/1", "title": "t", "snippet": "s"}]
+        seconda = [{"query": "q2", "link": "https://a.example/1", "title": "t", "snippet": "s"},
+                   {"query": "q2", "link": "https://b.example/2", "title": "t2", "snippet": "s2"}]
+        evento = {"event_date": "2008-11-05", "title": "Doppietta al Bernabeu"}
+        vuota = SimpleNamespace(text=json.dumps({"events": []}))
+        piena = SimpleNamespace(text=json.dumps({"events": [evento]}))
+        client = SimpleNamespace(models=MagicMock())
+        client.models.generate_content.side_effect = [vuota, piena]
+
+        with patch("script._cerca_fonti", side_effect=[prima, seconda]) as cerca:
+            eventi = script.scopri_candidati(client, "11-05", "5 NOVEMBRE", models=("modello",))
+
+        self.assertEqual(eventi, [evento])
+        self.assertEqual(cerca.call_count, 2)
+        secondo_prompt = client.models.generate_content.call_args_list[1].kwargs["contents"]
+        self.assertIn("https://b.example/2", secondo_prompt)
+        self.assertEqual(secondo_prompt.count("https://a.example/1"), 1)
 
     def test_scoperta_usa_serper_e_gemini_senza_tool(self):
         fonti = [
