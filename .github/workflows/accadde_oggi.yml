@@ -45,6 +45,7 @@ jobs:
         run: python -u script.py
 
       - name: Esegui Compleanni Juventus
+        if: ${{ !cancelled() }}
         env:
           TZ: Europe/Rome
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -52,7 +53,7 @@ jobs:
         run: python -u compleanni.py
 
       - name: Salva gli storici
-        if: success()
+        if: ${{ !cancelled() }}
         run: |
           FILES=(eventi_pubblicati.json compleanni_inviati.json)
 
